@@ -45,8 +45,6 @@ Restart the game after changing settings. See the [full configuration guide](di1
 
 LiteralCrab currently supports the verified Disney Infinity 1.0 Gold Edition PC executable. Unsupported game builds are rejected. Not all gameplay scenarios or display setups have been tested.
 
-See [validation results](di1/VALIDATION.md) for tested features and known limitations. The plugin writes `LiteralCrab.log` next to the ASI file for troubleshooting.
-
 ## Build from source
 
 Requires Visual Studio 2022 with C++ tools, the Windows SDK and CMake 3.21+.
