@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
 
+# This fork defaults to the isolated DI1 display ASI. None of the DI3 loader,
+# Lua, character, gameplay or Bink-proxy translation units enter this target.
+option(CRABELOADER_BUILD_DI1_ASI "Build the Disney Infinity 1.0 display ASI" ON)
+if(CRABELOADER_BUILD_DI1_ASI)
+    project(LiteralCrab VERSION 0.1.0 LANGUAGES C CXX)
+    include(di1/CMakeLists.txt)
+    return()
+endif()
+
 project(CrabeLoader VERSION 0.2.0 LANGUAGES C CXX)
 # Read VERSION file as the single source of truth
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" CRABELOADER_VERSION_RAW)

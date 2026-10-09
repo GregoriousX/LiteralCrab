@@ -1,0 +1,32 @@
+name: DI1 ASI - Build and test
+
+on:
+  push:
+    branches: [di1-display-asi]
+  pull_request:
+    branches: [di1-display-asi]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x86:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Windows x86 ASI
+        run: cmake -S . -B build-di1 -A Win32 -DCRABELOADER_BUILD_DI1_ASI=ON
+      - name: Build
+        run: cmake --build build-di1 --config Release --parallel
+      - name: Policy and frame pacing tests
+        run: ctest --test-dir build-di1 -C Release --output-on-failure
+      - name: Prepare ASI package
+        shell: pwsh
+        run: .\di1\package.ps1 -SourceRevision '${{ github.sha }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiteralCrab-x86-ASI
+          path: dist-di1/LiteralCrab-DI1-0.1.0-x86.zip
+
+# D3D9/D3D9Ex smoke tests use a real interactive graphics driver and run locally.

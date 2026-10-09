@@ -1,4 +1,11 @@
 build/
+build-di1*/
+dist-di1/
+di1/analysis/
+pc-analysis.txt
+old-mod-analysis.txt
+wiiu-analysis.txt
+wiiu-symbols.json
 Release/
 tools/*
 !tools/di3_gateway/
@@ -33,3 +40,4 @@ src/application/multiplayer/
 src/infrastructure/multiplayer/
 src/api/29_multiplayer.lua
 embedded_api_def.hpp
+!tools/inspect_di1.py
