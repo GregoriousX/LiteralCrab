@@ -38,6 +38,7 @@ struct LuaApi {
     double(__cdecl* toNumber)(lua_State*, int){};
     int(__cdecl* toBoolean)(lua_State*, int){};
     void(__cdecl* pushBoolean)(lua_State*, int){};
+    void(__cdecl* pushNumber)(lua_State*, double){};
     int(__cdecl* type)(lua_State*, int){};
 };
 using LogFunction = void (*)(const char* format, ...);

@@ -163,6 +163,120 @@ namespace {
         return result(state, tools && query(isUnlocked, tools, name));
     }
 
+    // Round power discs: the PC virtual reader feeds the portal emulation with tags
+    // (VirtualGateway::AddTag/RemoveTag), which raise the same GatewayTagChange messages a real
+    // base does; figures use antenna 0 and hex discs antenna 2. A round disc sits on its
+    // figure's antenna. Only IDs the game's tag database classes as round discs are accepted,
+    // so figures, play set pieces and hex discs stay with the game's own reader.
+    constexpr std::uint32_t addTagRva = 0x877B0, removeTagRva = 0x827E0, findTagRva = 0x7E620, gatewayLoad = 0x833E75;
+    // Tag database categories, measured in game: -1 unknown, 0 figures (1000001-1000038),
+    // 1 round discs (3000003-3000017, 3000062-3000063), 2 and 3 hex discs (4000018-4000070),
+    // 4 play set and Toy Box pieces (2000001-2000007).
+    constexpr int roundDiscCategory = 1;
+    using AddTagFn = void(__thiscall*)(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
+        std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
+    using RemoveTagFn = void(__thiscall*)(void*, std::uint32_t, std::uint32_t);
+    using FindTagFn = void*(__thiscall*)(void*, std::uint32_t, std::uint32_t);
+    // The tag database lookup AddTag uses: a tag ID's category, -1 if unknown.
+    constexpr std::uint32_t tagCategoryRva = 0x85A80;
+    using TagCategoryFn = int(__thiscall*)(void*, std::uint32_t);
+    TagCategoryFn tagCategory{};
+    void** gateway{};
+    AddTagFn addTag{};
+    RemoveTagFn removeTag{};
+    FindTagFn findTag{};
+
+    bool discsResolved() {
+        if (!codeMatches(base + addTagRva, "6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 3C 56 8B F1") ||
+            !codeMatches(base + removeTagRva, "6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 34 53 55 8B 6C 24 4C") ||
+            !codeMatches(base + findTagRva, "53 56 8B 74 24 0C 57 8B 7C 24 14 33 D2") ||
+            !codeMatches(base + gatewayLoad, "8B 0D ?? ?? ?? ?? E8") ||
+            !codeMatches(base + tagCategoryRva, "55 8B EC 83 E4 F8 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 48 53 8B D9") ||
+            !callsTo(base, 0x833EBF, addTagRva) || !callsTo(base, 0x833E7B, removeTagRva) || !callsTo(base, 0x82806, findTagRva) ||
+            !callsTo(base, 0x87832, tagCategoryRva))
+            return false;
+        gateway = *reinterpret_cast<void***>(base + gatewayLoad + 2);
+        if (!readable(gateway, sizeof(void*))) return false;
+        addTag = reinterpret_cast<AddTagFn>(base + addTagRva);
+        removeTag = reinterpret_cast<RemoveTagFn>(base + removeTagRva);
+        findTag = reinterpret_cast<FindTagFn>(base + findTagRva);
+        tagCategory = reinterpret_cast<TagCategoryFn>(base + tagCategoryRva);
+        return true;
+    }
+
+    int categoryOf(std::uint32_t id) noexcept {
+        __try {
+            void* reader = *gateway;
+            return reader ? tagCategory(reader, id) : -1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return -1;
+        }
+    }
+
+    bool idArgument(lua_State* state, int index, std::uint32_t& id) noexcept {
+        if (lua.type(state, index) != 3) return false;
+        const double number = lua.toNumber(state, index);
+        if (number < 1 || number > 99999999 || number != static_cast<std::uint32_t>(number)) return false;
+        id = static_cast<std::uint32_t>(number);
+        return true;
+    }
+
+    bool discArgument(lua_State* state, int index, std::uint32_t& disc) noexcept {
+        return idArgument(state, index, disc) && categoryOf(disc) == roundDiscCategory;
+    }
+
+    bool discPlaced(std::uint32_t disc) noexcept {
+        __try {
+            void* reader = *gateway;
+            return reader && findTag(reader, disc, 0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    // LiteralCrab.PlaceDisc(player, disc) -> placed. Puts a round disc on the player's figure
+    // antenna, as if it were set under the figure; placing it again changes nothing.
+    int __cdecl placeDisc(lua_State* state) {
+        std::uint32_t disc{};
+        if (lua.type(state, 1) != 3 || !discArgument(state, 2, disc)) return result(state, false);
+        const double player = lua.toNumber(state, 1);
+        if (player != 0 && player != 1) return result(state, false);
+        if (discPlaced(disc)) return result(state, true);
+        __try {
+            void* reader = *gateway;
+            if (reader) addTag(reader, disc, 0, disc, static_cast<std::uint32_t>(player), 0, 0, 0, 0, 0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            log("Adapter PlaceDisc: native fault 0x%08lX for %u.", GetExceptionCode(), disc);
+        }
+        return result(state, discPlaced(disc));
+    }
+
+    // LiteralCrab.RemoveDisc(disc) -> true when the disc is no longer placed.
+    int __cdecl removeDisc(lua_State* state) {
+        std::uint32_t disc{};
+        if (!discArgument(state, 1, disc)) return result(state, false);
+        if (!discPlaced(disc)) return result(state, true);
+        __try {
+            void* reader = *gateway;
+            if (reader) removeTag(reader, disc, 0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            log("Adapter RemoveDisc: native fault 0x%08lX for %u.", GetExceptionCode(), disc);
+        }
+        return result(state, !discPlaced(disc));
+    }
+
+    // LiteralCrab.TagCategory(id) -> the game's tag category (see above), -1 when unknown.
+    int __cdecl tagCategoryOf(lua_State* state) {
+        std::uint32_t id{};
+        lua.pushNumber(state, idArgument(state, 1, id) ? categoryOf(id) : -1);
+        return 1;
+    }
+
+    int __cdecl isDiscPlaced(lua_State* state) {
+        std::uint32_t disc{};
+        return result(state, discArgument(state, 1, disc) && discPlaced(disc));
+    }
+
     // LiteralCrab.HasToolSet(player) -> the player currently has an avatar with tools.
     int __cdecl hasToolSet(lua_State* state) {
         if (lua.type(state, 1) != 3) return result(state, false);
@@ -185,6 +299,15 @@ std::vector<mods::LibraryFunction> resolveAdapters(HMODULE host, const mods::Lua
         log("Mods: adapters available to patches: AwardTool, UnAwardTool, IsToolAwarded, IsToolUnlocked, HasToolSet.");
     } else {
         log("Mods: tool adapter signatures differ; LiteralCrab.AwardTool is unavailable.");
+    }
+    if (discsResolved()) {
+        adapters.push_back({"PlaceDisc", &placeDisc});
+        adapters.push_back({"RemoveDisc", &removeDisc});
+        adapters.push_back({"IsDiscPlaced", &isDiscPlaced});
+        if (api.pushNumber) adapters.push_back({"TagCategory", &tagCategoryOf});
+        log("Mods: adapters available to patches: PlaceDisc, RemoveDisc, IsDiscPlaced, TagCategory.");
+    } else {
+        log("Mods: virtual reader signatures differ; LiteralCrab.PlaceDisc is unavailable.");
     }
     return adapters;
 }

@@ -102,7 +102,7 @@ int main() {
     write(root / "demo/menu.lua",
         "local menu, options, log = ...\nfor i = 1, options.Count do table.insert(menu.items, options.Item) end\nlog('added')");
     write(root / "demo/menu_second.lua", "local menu = ...\nmenu.second = #menu.items");
-    write(root / "demo/env.lua", "Y = X + 1");
+    write(root / "demo/env.lua", "local _, _, _, environment = ...\nY = X + 1\nSeenX = rawget(environment, 'X')");
     write(root / "demo/fails.lua", "error('boom')");
     write(root / "demo/syntax.lua", "this is not lua");
     write(root / "demo/noop.lua", "Patched = (Patched or 0) + 1");
@@ -180,6 +180,9 @@ int main() {
         CHECK(lua_pcall(state, 0, 0, 0) == 0);
         lua_getfield(state, -1, "Y");
         CHECK(lua_tonumber(state, -1) == 2);
+        // The fourth argument is that environment itself, for walking the chunk's globals.
+        lua_getfield(state, -2, "SeenX");
+        CHECK(lua_tonumber(state, -1) == 1);
         lua_settop(state, 0);
         CHECK(evaluate(state, "X == nil and Y == nil"));
     }

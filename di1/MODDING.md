@@ -86,13 +86,14 @@ Prefer patches when possible. They compose with other mods and survive small dif
 
 ## Patches
 
-A patch runs immediately after the chunk it targets, every time that chunk runs. It shares the chunk's environment, so the globals and tables the chunk just defined are visible. It receives three arguments:
+A patch runs immediately after the chunk it targets, every time that chunk runs. It shares the chunk's environment, so the globals and tables the chunk just defined are visible. It receives four arguments:
 
 ```lua
-local result, options, log = ...
--- result:  the first value the chunk returned (often nil)
--- options: this mod's [Options], after user.ini
--- log:     log(message) writes "Mod <mod>/<file>: message" to LiteralCrab.log
+local result, options, log, environment = ...
+-- result:      the first value the chunk returned (often nil)
+-- options:     this mod's [Options], after user.ini
+-- log:         log(message) writes "Mod <mod>/<file>: message" to LiteralCrab.log
+-- environment: the chunk's global table, e.g. to walk everything it defined with pairs()
 
 if options.ShowExtras == 1 and type(PauseMenu) == "table" then
     -- adjust the tables the game script just built
@@ -122,6 +123,12 @@ Some game capabilities have no Lua binding on PC. LiteralCrab provides a few as 
 | `UnAwardTool(player, tool)` | `true` when the tool is no longer awarded. |
 | `IsToolAwarded(player, tool)` / `IsToolUnlocked(player, tool)` | The tool's current state on that player's avatar. |
 | `HasToolSet(player)` | `true` while that player has an avatar with tools. Before a world loads there is none, and every tool call returns `false`. |
+| `PlaceDisc(player, disc)` | `true` once the round power disc is on the virtual base, as if set under that player's figure (`player` 0 or 1). The game then applies and reports it like a disc on a real base. Placing it again changes nothing. |
+| `RemoveDisc(disc)` | `true` when the disc is no longer on the base. |
+| `IsDiscPlaced(disc)` | Whether the disc is on the base. |
+| `TagCategory(id)` | The game's own classification of a figure or disc ID: `0` figure, `1` round power disc, `2`/`3` hex power disc, `4` play set or Toy Box piece, `-1` unknown. |
+
+Round power discs are DI1 IDs `3000003`–`3000017` and `3000062`–`3000063`. `PlaceDisc` only accepts IDs the game itself classes as round discs, so figures, play set pieces and hex discs stay with the game's virtual reader. Verified examples: `3000003` Bolt's Super Strength (all damage), `3000004` Ralph's Power of Destruction (melee damage), `3000006` C.H.R.O.M.E. Damage Increaser (ranged damage), `3000008` Electro-Charge (full health). The discs a player has active can be read in UI scripts with the game's own `UI_GetItemDetails("PowerDiscs", player, "Name,Value,Type")`.
 
 `player` is the game's local player index (`0` for the first player, as in `self.InstanceData.playerNum`), and `tool` is a tool identifier such as `ITEM_BASEBALLGUN` or `PROP_SHOVELPACK`. Invalid arguments return `false`. Awards belong to the current avatar. A mod that should keep a tool available re-applies it, for example when the pause menu opens, rather than assuming it survives character swaps or reloads.
 

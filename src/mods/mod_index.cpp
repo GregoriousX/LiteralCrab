@@ -32,7 +32,7 @@ local function finish(environment, ...)
         end,
         __newindex = environment,
     }))
-    local ok, detail = pcall(patch, (...), options, say)
+    local ok, detail = pcall(patch, (...), options, say, environment)
     if not ok then say('FAILED: ' .. tostring(detail)) end
     return ...
 end

@@ -39,6 +39,7 @@ namespace {
         {0x64330, "8B 4C 24 08 8B 54 24 04 E8 33 F9 FF FF 8B 48 04", 0x733B0},       // lua_toboolean
         {0x64720, "8B 44 24 04 8B 48 08 33 D2 39 54 24 08 C7 41 04", 0x72F51},       // lua_pushboolean
         {0x64090, "8B 4C 24 08 8B 54 24 04 E8 D3 FB FF FF 3D", 0x730C0},             // lua_type
+        {0x64580, "8B 4C 24 04 8B 41 08 F2 0F 10 44 24 08 F2 0F 11", 0x72B84},       // lua_pushnumber
     };
 
     // luaL_Reg arrays of the statically linked standard library: {name, function} pairs ending in
@@ -143,6 +144,7 @@ bool installMods(HMODULE host) {
             bind(api.toBoolean, base + adapterLuaFunctions[1].rva);
             bind(api.pushBoolean, base + adapterLuaFunctions[2].rva);
             bind(api.type, base + adapterLuaFunctions[3].rva);
+            bind(api.pushNumber, base + adapterLuaFunctions[4].rva);
             api.adapters = resolveAdapters(host, api);
         } else {
             log("Mods: Lua value functions differ; no LiteralCrab adapters.");
