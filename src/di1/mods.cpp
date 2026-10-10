@@ -61,6 +61,7 @@ namespace {
     // usage limits (object costs, measured memory, frame time) that fill its meter and stop
     // further placement. Every number in UsageLimits and NetworkLimits is multiplied.
     constexpr std::string_view toyBoxLimitsPatch = R"lua(
+local _, options, log = ...
 local limits = ToyBoxLimits
 if type(limits) ~= "table" then
     log("ToyBoxLimits not found; the game's limits are unchanged")
@@ -156,7 +157,7 @@ bool installMods(HMODULE host) {
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
         if (settings.toyBoxLimitScale > 1)
-            index.addBuiltinPatch({"toyboxstats_limits.lua", "contains:BucketOGoodness"}, "toybox_limits", std::string(toyBoxLimitsPatch),
+            index.addBuiltinPatch({"toyboxstats_limits.lua", "contains:ToyBoxLimits ="}, "toybox_limits", std::string(toyBoxLimitsPatch),
                 "{Scale=" + std::to_string(settings.toyBoxLimitScale) + "}");
         if (index.empty()) {
             log("Mods: no script mods to load; game scripts untouched.");
