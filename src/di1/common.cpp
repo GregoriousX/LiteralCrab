@@ -53,6 +53,15 @@ void openLogAndConfig(HMODULE module) {
     settings.diagnostics = GetPrivateProfileIntW(L"Display", L"Diagnostics", 0, iniPath) != 0;
     settings.mods = GetPrivateProfileIntW(L"Mods", L"Enabled", 1, iniPath) != 0;
     settings.modTrace = GetPrivateProfileIntW(L"Mods", L"Trace", 0, iniPath) != 0;
+    wchar_t delay[64]{};
+    GetPrivateProfileStringW(L"Camera", L"ReturnDelay", L"default", delay, 64, iniPath);
+    if (_wcsicmp(delay, L"default")) {
+        wchar_t* delayEnd{};
+        const double seconds = wcstod(delay, &delayEnd);
+        if (delayEnd != delay && !*delayEnd && seconds >= 0.0 && seconds <= 3600.0)
+            settings.cameraReturnDelay = static_cast<float>(seconds);
+        else log("Invalid Camera ReturnDelay; using the game's own delays.");
+    }
     log("LiteralCrab DI1 ASI " LITERALCRAB_VERSION "; upstream dev 7f251e8eec5de534a2ed9b8efa0694f259706f0f.");
     log("Display mode: %ls; resolution unlock=%d; UI aspect=%d; FOV=%d.",
         modeName(settings.mode), settings.unlockResolutions, settings.fixUiAspect, settings.fixFov);

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "di1/camera.hpp"
 #include "di1/common.hpp"
 #include "di1/display.hpp"
 #include "di1/engine.hpp"
@@ -56,6 +57,8 @@ namespace {
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&initialize), &pinned);
         crabe::di1::log("READY: DI1 display hooks installed before engine startup.");
+        // Optional and independent: only installed when LiteralCrab.ini sets a camera option.
+        crabe::di1::installCameraHooks(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
         crabe::di1::installMods(host);
     }

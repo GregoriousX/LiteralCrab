@@ -12,6 +12,11 @@
 // function used here is the one the PC game itself uses for that action: CreateRibbonScreen
 // and its gates from the PC editor input handler, the Toy Vault from UI_ActivateToyMaker, the
 // cancel flag from UI_SetAdventureCancelReturnsToPauseMenu.
+//
+// On PC these menus normally sit on the pause menu, whose pause switches the mouse to a pointer
+// and whose unpause switches it back to camera control. Opened from the world they would keep
+// the camera mouse, so a menu opened here switches to the pointer as UI_MousePointerMode does,
+// and the camera mouse returns once the player has had no screen for a few input frames.
 #include "di1/gui_screens.hpp"
 #include "di1/common.hpp"
 #include "minhook/MinHook.h"
@@ -32,6 +37,13 @@ namespace {
     constexpr std::uint32_t editorInputRva = 0x7C81C0, worldFlagRva = 0xAFE260, toyBoxEditableRva = 0xC56BA0, playerBusyRva = 0x755D30;
     // UI_ActivateToyMaker and RumpusUnlockUI::ShowSpinnerPrompt; the first local player.
     constexpr std::uint32_t toyMakerRva = 0x836EA0, spinnerRva = 0x924550, primaryPlayerRva = 0xAE1350;
+    // Mouse modes: UI_MouseCamMode/UI_MousePointerMode are front-end slots 0xC0/0xC4 over the
+    // WindowsSystemInputDriver, whose slot 0x40 reports camera control and slot 0x04 updates it
+    // once per frame.
+    constexpr std::uint32_t camModeRva = 0x832090, pointerModeRva = 0x8320C0, hasScreenRva = 0x832C50, addScreenRva = 0xC48EA0;
+    constexpr std::uint32_t inputVtableRva = 0xE9BAD4, inputUpdateRva = 0x97150, inputCapturedRva = 0x93660;
+    constexpr std::size_t camModeSlot = 0xC0, pointerModeSlot = 0xC4, inputUpdateSlot = 0x04, inputCapturedSlot = 0x40;
+    constexpr unsigned restoreFrames = 3;
     constexpr unsigned maxLogLines = 200;
 
     using HandlerFn = int(__thiscall*)(void*, void*);
@@ -45,6 +57,7 @@ namespace {
     using WorldFlagFn = bool(__thiscall*)(void*, const char*, std::uint32_t, int, int);
     using FlagFn = bool(__thiscall*)(void*);
     using SpinnerFn = void(__thiscall*)(void*, int, int);
+    using VoidFn = void(__thiscall*)(void*);
 
     std::uintptr_t base{};
     HandlerFn original{};
@@ -67,7 +80,15 @@ namespace {
     void** rumpusUnlock{};
     const char* mainLayer{};
     const char* worldIsPlayset{};
+    void** inputDriver{};
+    VoidFn originalInputUpdate{};
     std::atomic<unsigned> logged{};
+    // Pointer mode switched on for this player's menu; -1 when nothing is to be restored.
+    // Written and read on the thread that runs world graphs and menus.
+    int restorePlayer = -1;
+    unsigned framesWithoutScreen{};
+    DWORD menuThread{};
+    bool threadWarned{};
 
     template <class T> T global(std::uint32_t operand) { return *reinterpret_cast<T*>(base + operand); }
 
@@ -118,6 +139,22 @@ namespace {
             !codeMatches(base + primaryPlayerRva, "51 53 56 57 8B F9 C7 44 24 0C FF FF FF FF 33 F6 E8 7B 72 FF") ||
             !callsTo(base, 0xAE4937, primaryPlayerRva))
             return false;
+        // Mouse modes and the input driver's frame update, with their vtable slots.
+        if (!codeMatches(base + camModeRva, "8B 0D ?? ?? ?? ?? 8B 01 8B 50 40 FF D2 84 C0 75 1C 8B 0D ?? ?? ?? ?? 8B 01 8B 50 44 FF D2 "
+                "8B 0D ?? ?? ?? ?? 8B 01 8B 50 4C 6A 00 FF D2 C3") ||
+            !codeMatches(base + pointerModeRva, "8B 0D ?? ?? ?? ?? 8B 01 8B 50 40 FF D2 84 C0 74 1C 8B 0D ?? ?? ?? ?? 8B 01 8B 50 48 FF D2 "
+                "8B 0D ?? ?? ?? ?? 8B 01 8B 50 4C 6A 01 FF D2 C3") ||
+            !codeMatches(base + inputUpdateRva, "A1 ?? ?? ?? ?? 83 EC 10 53 56 8B F1 8B C8 40 33 DB 57 A3") ||
+            !codeMatches(base + inputCapturedRva, "8A 81 1E 02 00 00 C3") ||
+            !codeMatches(base + hasScreenRva, "53 56 8B 74 24 0C 57 56 8B F9 32 DB E8"))
+            return false;
+        const auto slot = [](std::uint32_t table, std::size_t offset) { return global<std::uintptr_t>(table + static_cast<std::uint32_t>(offset)) - base; };
+        if (slot(frontEndVtableRva, camModeSlot) != camModeRva || slot(frontEndVtableRva, pointerModeSlot) != pointerModeRva ||
+            slot(frontEndVtableRva, playerHasScreenSlot) != hasScreenRva || slot(frontEndVtableRva, addScreenSlot) != addScreenRva ||
+            slot(inputVtableRva, inputUpdateSlot) != inputUpdateRva || slot(inputVtableRva, inputCapturedSlot) != inputCapturedRva)
+            return false;
+        inputDriver = global<void**>(camModeRva + 2);
+        if (inputDriver != global<void**>(pointerModeRva + 2) || !readable(inputDriver, 4)) return false;
 
         playerManager = global<void**>(handlerRva + 0x34);
         frontEnd = global<void**>(ribbonRva + 0x1E);
@@ -166,6 +203,55 @@ namespace {
         return *reinterpret_cast<const int*>(players + player * 64 + 8) == 1;
     }
 
+    // The input driver, only while it is the WindowsSystemInputDriver measured here.
+    void* input() {
+        void* driver = *inputDriver;
+        return driver && *static_cast<std::uintptr_t*>(driver) == base + inputVtableRva ? driver : nullptr;
+    }
+    bool cameraMouse(void* driver) { return virtualFunction<FlagFn>(driver, inputCapturedSlot)(driver); }
+
+    // A menu opened from the world: give the mouse to the menu, remember to give it back.
+    void usePointer(void* layer, int player) {
+        void* driver = input();
+        if (!driver || !cameraMouse(driver)) return;
+        virtualFunction<VoidFn>(layer, pointerModeSlot)(layer);
+        restorePlayer = player;
+        framesWithoutScreen = 0;
+        menuThread = GetCurrentThreadId();
+    }
+
+    // Once per input frame: the camera mouse returns after the player's menus are all closed.
+    void restoreCamera() noexcept {
+        __try {
+            if (GetCurrentThreadId() != menuThread) {
+                if (!threadWarned) {
+                    threadWarned = true;
+                    log("TriggerGuiScreen: input updates run on another thread; the camera mouse is not restored automatically.");
+                }
+                return;
+            }
+            void* layer = frontEndLayer();
+            if (!layer || virtualFunction<PlayerQueryFn>(layer, playerHasScreenSlot)(layer, restorePlayer)) {
+                framesWithoutScreen = 0;
+                return;
+            }
+            if (++framesWithoutScreen < restoreFrames) return;
+            void* driver = input();
+            if (driver && !cameraMouse(driver)) virtualFunction<VoidFn>(layer, camModeSlot)(layer);
+            if (logged.fetch_add(1, std::memory_order_relaxed) < maxLogLines)
+                log("TriggerGuiScreen: player %d closed the menus; camera mouse restored.", restorePlayer);
+            restorePlayer = -1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            restorePlayer = -1;
+            log("TriggerGuiScreen: native fault 0x%08lX while restoring the camera mouse.", GetExceptionCode());
+        }
+    }
+
+    void __fastcall hookInputUpdate(void* driver, void*) {
+        originalInputUpdate(driver);
+        if (restorePlayer >= 0) restoreCamera();
+    }
+
     // Adds a front-end screen for the player exactly as the console handler does.
     bool addScreen(void* layer, const char* name, int player) {
         return virtualFunction<AddScreenFn>(layer, addScreenSlot)(layer, name, player, 0, 0, mainLayer, 0, 1, -1) != -1;
@@ -207,6 +293,7 @@ namespace {
         case 4: {
             const bool added = addScreen(layer, screens[command], player);
             note(command, player, added ? screens[command] : "screen refused by the front end");
+            if (added) usePointer(layer, player);
             return true;
         }
         default:
@@ -257,10 +344,11 @@ bool installGuiScreenCommands(HMODULE host) {
         log("Mods: engine feature TriggerGuiScreen unavailable: game code differs.");
         return false;
     }
-    auto* target = reinterpret_cast<void*>(base + handlerRva);
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&hookIn), reinterpret_cast<void**>(&original)) != MH_OK ||
-        MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
+    void* targets[] = {reinterpret_cast<void*>(base + handlerRva), reinterpret_cast<void*>(base + inputUpdateRva)};
+    if (MH_CreateHook(targets[0], reinterpret_cast<void*>(&hookIn), reinterpret_cast<void**>(&original)) != MH_OK ||
+        MH_CreateHook(targets[1], reinterpret_cast<void*>(&hookInputUpdate), reinterpret_cast<void**>(&originalInputUpdate)) != MH_OK ||
+        MH_EnableHook(targets[0]) != MH_OK || MH_EnableHook(targets[1]) != MH_OK) {
+        for (const auto target : targets) { MH_DisableHook(target); MH_RemoveHook(target); }
         log("Mods: engine feature TriggerGuiScreen unavailable: hook refused.");
         return false;
     }

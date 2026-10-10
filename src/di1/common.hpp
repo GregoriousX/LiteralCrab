@@ -22,6 +22,9 @@ struct Config {
     bool diagnostics = false;
     bool mods = true;
     bool modTrace = false;
+    // Seconds before the camera returns behind the character after the player moves it;
+    // negative keeps each camera's own value.
+    float cameraReturnDelay = -1.0f;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;
