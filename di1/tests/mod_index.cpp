@@ -120,8 +120,8 @@ int main() {
     // Host patches: listed as LiteralCrab, after the mods' patches, found by the usual matching.
     auto hosted = Index::load(root, messages);
     const auto before = hosted.scripts.size();
-    hosted.addBuiltinPatch("ToyBoxStats_Limits.lua", "toybox_limits", "local x = 1", "{Scale=10}");
-    hosted.addBuiltinPatch("Presentation/PauseMenu.lua", "pause", "return", "{}");
+    hosted.addBuiltinPatch({"ToyBoxStats_Limits.lua", "contains:BucketOGoodness"}, "toybox_limits", "local x = 1", "{Scale=10}");
+    hosted.addBuiltinPatch({"Presentation/PauseMenu.lua", "contains:short"}, "pause", "return", "{}");
     CHECK(hosted.scripts.size() == before + 2 && hosted.mods.back().folder == "LiteralCrab");
     count = hosted.find("@GameDB/Core/ToyBoxStats_Limits.lua", "", matches);
     CHECK(count == 1 && matches[0]->patches.size() == 1);
@@ -130,6 +130,10 @@ int main() {
         CHECK(patch.chunk == "@LiteralCrab/toybox_limits" && patch.body == "local x = 1");
         CHECK(patch.source.find("local options = {Scale=10}") != std::string::npos);
     }
+    // The marker serves the same script for an unnamed chunk; too short a marker is dropped.
+    count = hosted.find("", "x = { BucketOGoodness = 1 }", matches);
+    CHECK(count == 1 && matches[0]->content && hosted.scripts[matches[0]->patches.back()].chunk == "@LiteralCrab/toybox_limits");
+    CHECK(hosted.find("", "short", matches) == 0);
     count = hosted.find("@presentation/pausemenu.lua", "", matches);
     CHECK(count == 1 && matches[0]->patches.size() == 3 &&
         hosted.scripts[matches[0]->patches[2]].chunk == "@LiteralCrab/pause");

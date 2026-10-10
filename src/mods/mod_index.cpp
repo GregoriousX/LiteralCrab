@@ -343,11 +343,9 @@ Index Index::load(const std::wstring& modsRoot, std::vector<std::string>& messag
     return index;
 }
 
-void Index::addBuiltinPatch(std::string_view target, std::string_view label, std::string body, std::string_view options) {
-    char buffer[maxChunkName];
-    const auto length = normalize(target, buffer);
-    if (!length || scripts.size() >= maxScripts || mods.size() >= maxMods) return;
-    const std::string path(buffer, length);
+void Index::addBuiltinPatch(std::initializer_list<std::string_view> chunks, std::string_view label, std::string body,
+    std::string_view options) {
+    if (!chunks.size() || scripts.size() >= maxScripts || mods.size() >= maxMods) return;
     const auto modIndex = static_cast<std::uint16_t>(mods.size());
     mods.push_back({"LiteralCrab", std::string(label), {}, 1, {}});
     Script script;
@@ -358,12 +356,28 @@ void Index::addBuiltinPatch(std::string_view target, std::string_view label, std
         "\nlocal options = " + std::string(options) + std::string(builderTail);
     const auto scriptIndex = static_cast<std::uint16_t>(scripts.size());
     scripts.push_back(std::move(script));
-    auto found = std::find_if(targets.begin(), targets.end(), [&](const Target& existing) { return existing.path == path; });
-    if (found == targets.end()) {
-        targets.push_back({path, false});
-        found = targets.end() - 1;
+    for (const auto chunk : chunks) {
+        // Same target syntax as mod.ini: a chunk name, or "contains:<marker>" for unnamed chunks.
+        constexpr std::string_view prefix = "contains:";
+        const bool content = chunk.substr(0, prefix.size()) == prefix;
+        std::string path;
+        if (content) {
+            path = std::string(chunk.substr(prefix.size()));
+            if (path.size() < minMarker) continue;
+        } else {
+            char buffer[maxChunkName];
+            const auto length = normalize(chunk, buffer);
+            if (!length) continue;
+            path.assign(buffer, length);
+        }
+        auto& list = content ? contents : targets;
+        auto found = std::find_if(list.begin(), list.end(), [&](const Target& existing) { return existing.path == path; });
+        if (found == list.end()) {
+            list.push_back({path, content});
+            found = list.end() - 1;
+        }
+        found->patches.push_back(scriptIndex);
     }
-    found->patches.push_back(scriptIndex);
     orderTargets(targets);
 }
 }

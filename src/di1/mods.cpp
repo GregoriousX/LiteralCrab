@@ -156,7 +156,7 @@ bool installMods(HMODULE host) {
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
         if (settings.toyBoxLimitScale > 1)
-            index.addBuiltinPatch("toyboxstats_limits.lua", "toybox_limits", std::string(toyBoxLimitsPatch),
+            index.addBuiltinPatch({"toyboxstats_limits.lua", "contains:BucketOGoodness"}, "toybox_limits", std::string(toyBoxLimitsPatch),
                 "{Scale=" + std::to_string(settings.toyBoxLimitScale) + "}");
         if (index.empty()) {
             log("Mods: no script mods to load; game scripts untouched.");
