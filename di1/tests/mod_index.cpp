@@ -117,6 +117,23 @@ int main() {
     CHECK(index.find("", "tb_worldpu_fortress", matches) == 0);
     CHECK(Index::load(root / "absent", messages).empty());
 
+    // Host patches: listed as LiteralCrab, after the mods' patches, found by the usual matching.
+    auto hosted = Index::load(root, messages);
+    const auto before = hosted.scripts.size();
+    hosted.addBuiltinPatch("ToyBoxStats_Limits.lua", "toybox_limits", "local x = 1", "{Scale=10}");
+    hosted.addBuiltinPatch("Presentation/PauseMenu.lua", "pause", "return", "{}");
+    CHECK(hosted.scripts.size() == before + 2 && hosted.mods.back().folder == "LiteralCrab");
+    count = hosted.find("@GameDB/Core/ToyBoxStats_Limits.lua", "", matches);
+    CHECK(count == 1 && matches[0]->patches.size() == 1);
+    if (count == 1) {
+        const auto& patch = hosted.scripts[matches[0]->patches[0]];
+        CHECK(patch.chunk == "@LiteralCrab/toybox_limits" && patch.body == "local x = 1");
+        CHECK(patch.source.find("local options = {Scale=10}") != std::string::npos);
+    }
+    count = hosted.find("@presentation/pausemenu.lua", "", matches);
+    CHECK(count == 1 && matches[0]->patches.size() == 3 &&
+        hosted.scripts[matches[0]->patches[2]].chunk == "@LiteralCrab/pause");
+
     fs::remove_all(root);
     if (failures) return 1;
     std::puts("PASS: mod discovery, validation and chunk matching");

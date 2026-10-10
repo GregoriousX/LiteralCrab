@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <exception>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace crabe::di1 {
@@ -56,6 +57,29 @@ namespace {
         {0xE98A50, "string.", 15},
         {0xE988A0, "math.", 28},
     };
+    // [ToyBox] LimitScale: GameDB/Core/ToyBoxStats_Limits.lua defines the Toy Box editor's
+    // usage limits (object costs, measured memory, frame time) that fill its meter and stop
+    // further placement. Every number in UsageLimits and NetworkLimits is multiplied.
+    constexpr std::string_view toyBoxLimitsPatch = R"lua(
+local limits = ToyBoxLimits
+if type(limits) ~= "table" then
+    log("ToyBoxLimits not found; the game's limits are unchanged")
+    return
+end
+local changed = 0
+for _, group in pairs({limits.UsageLimits, limits.NetworkLimits}) do
+    if type(group) == "table" then
+        for key, value in pairs(group) do
+            if type(value) == "number" then
+                group[key] = value * options.Scale
+                changed = changed + 1
+            end
+        end
+    end
+end
+log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
+)lua";
+
     constexpr std::uint32_t codeStart = 0x1000, codeEnd = 0x1000 + 0xE52E4A;
     constexpr std::uint32_t imageSize = 0x1511000;
 
@@ -119,7 +143,7 @@ namespace {
 bool installMods(HMODULE host) {
     const auto& settings = config();
     if (!settings.mods) {
-        log("Mods: disabled by configuration.");
+        log("Mods: disabled by configuration.%s", settings.toyBoxLimitScale > 1 ? " ToyBox LimitScale needs [Mods] Enabled=1." : "");
         return true;
     }
     if (!*pluginDirectory()) return false;
@@ -131,6 +155,9 @@ bool installMods(HMODULE host) {
         installAssets(host, modsRoot, index.mods, messages);
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
+        if (settings.toyBoxLimitScale > 1)
+            index.addBuiltinPatch("toyboxstats_limits.lua", "toybox_limits", std::string(toyBoxLimitsPatch),
+                "{Scale=" + std::to_string(settings.toyBoxLimitScale) + "}");
         if (index.empty()) {
             log("Mods: no script mods to load; game scripts untouched.");
             return true;

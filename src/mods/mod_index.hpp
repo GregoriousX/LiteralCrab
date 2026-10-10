@@ -50,6 +50,10 @@ public:
     // skipped as a whole and described in messages; valid ones are unaffected.
     static Index load(const std::wstring& modsRoot, std::vector<std::string>& messages);
     bool empty() const noexcept { return targets.empty() && contents.empty(); }
+    // A patch the host itself provides for a named game chunk (an option rather than a mod
+    // folder). It runs after the mods' patches for that chunk, with options as a Lua table
+    // constructor, and is listed as mod "LiteralCrab".
+    void addBuiltinPatch(std::string_view target, std::string_view label, std::string body, std::string_view options);
     // Hot path: no allocation. identity is the chunk name as the engine reports it. A named chunk
     // matches every target whose path is a '/'-bounded suffix of it, longest path first. A chunk
     // without a name is searched for content markers instead, in load order. Returns the count.

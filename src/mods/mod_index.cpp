@@ -43,6 +43,17 @@ return function(...)
 end
 )lua";
 
+    // Basenames, then the order find() searches: by basename, longest path first.
+    void orderTargets(std::vector<Target>& targets) {
+        for (auto& target : targets) {
+            const auto slash = target.path.rfind('/');
+            target.basename = slash == std::string::npos ? 0 : slash + 1;
+        }
+        std::sort(targets.begin(), targets.end(), [](const Target& left, const Target& right) {
+            return left.name() != right.name() ? left.name() < right.name() : left.path.size() > right.path.size();
+        });
+    }
+
     std::string utf8(std::wstring_view value) {
         if (value.empty()) return {};
         const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
@@ -328,13 +339,31 @@ Index Index::load(const std::wstring& modsRoot, std::vector<std::string>& messag
             messages.push_back("Mod " + folderName + " skipped: " + failure.what());
         }
     }
-    for (auto& target : index.targets) {
-        const auto slash = target.path.rfind('/');
-        target.basename = slash == std::string::npos ? 0 : slash + 1;
-    }
-    std::sort(index.targets.begin(), index.targets.end(), [](const Target& left, const Target& right) {
-        return left.name() != right.name() ? left.name() < right.name() : left.path.size() > right.path.size();
-    });
+    orderTargets(index.targets);
     return index;
+}
+
+void Index::addBuiltinPatch(std::string_view target, std::string_view label, std::string body, std::string_view options) {
+    char buffer[maxChunkName];
+    const auto length = normalize(target, buffer);
+    if (!length || scripts.size() >= maxScripts || mods.size() >= maxMods) return;
+    const std::string path(buffer, length);
+    const auto modIndex = static_cast<std::uint16_t>(mods.size());
+    mods.push_back({"LiteralCrab", std::string(label), {}, 1, {}});
+    Script script;
+    script.mod = modIndex;
+    script.chunk = "@LiteralCrab/" + std::string(label);
+    script.body = std::move(body);
+    script.source = "local original, patch, log, lib = ...\nlocal label = " + luaQuote("LiteralCrab/" + std::string(label)) +
+        "\nlocal options = " + std::string(options) + std::string(builderTail);
+    const auto scriptIndex = static_cast<std::uint16_t>(scripts.size());
+    scripts.push_back(std::move(script));
+    auto found = std::find_if(targets.begin(), targets.end(), [&](const Target& existing) { return existing.path == path; });
+    if (found == targets.end()) {
+        targets.push_back({path, false});
+        found = targets.end() - 1;
+    }
+    found->patches.push_back(scriptIndex);
+    orderTargets(targets);
 }
 }
