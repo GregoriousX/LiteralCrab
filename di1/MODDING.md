@@ -1,6 +1,6 @@
 # LiteralCrab mods
 
-LiteralCrab can load mods for Disney Infinity 1.0 Gold Edition. The loader is deliberately small. A mod can replace game files (see [Asset mods](#asset-mods)), replace a game Lua chunk, or patch a chunk after the game has compiled it. LiteralCrab adds only logging, option values and the game's own basic Lua library functions. It exposes no memory access or native hooks, and it does not sandbox scripts: they run with whatever the game's Lua environment provides, so install mods only from authors you trust. LiteralCrab itself ships no mods. Mods are separate downloads, so the display plugin stays stable whether or not mods are installed.
+LiteralCrab can load mods for Disney Infinity 1.0 Gold Edition. The loader is deliberately small. A mod can replace game files (see [Asset mods](#asset-mods)), replace a game Lua chunk, or patch a chunk after the game has compiled it. LiteralCrab adds only logging, option values, the game's own basic Lua library functions and a few verified engine adapters. It exposes no memory access or native hooks, and it does not sandbox scripts: they run with whatever the game's Lua environment provides, so install mods only from authors you trust. LiteralCrab itself ships no mods. Mods are separate downloads, so the display plugin stays stable whether or not mods are installed.
 
 Mods are read once at startup. Restart the game after installing, removing or configuring a mod.
 
@@ -111,6 +111,31 @@ The game loads many data tables into Lua states that have no standard library at
 - `math.*` except `random` and `randomseed`, plus `math.pi` and `math.huge`
 
 These fallbacks are not added to the game's state. Globals a patch assigns are written to the chunk's environment, exactly as if the chunk had defined them. File, process and module functions are not provided. String methods (`("x"):upper()`) work only where the game opened the string library; call `string.upper("x")` instead.
+
+### Engine adapters (`LiteralCrab.*`)
+
+Some game capabilities have no Lua binding on PC. LiteralCrab provides a few as adapters in the `LiteralCrab` table. Each adapter checks the game's code before it becomes available, and is left out (and logged) on any other build. Test for one with `LiteralCrab.has("AwardTool")` before using it. Functions created inside a patch, such as a wrapped menu method, keep access to `LiteralCrab` when the game calls them later.
+
+| Adapter | Result |
+| --- | --- |
+| `AwardTool(player, tool[, force])` | `true` once the tool is awarded. Runs the game's own award (what its `AwardTool`/`ForceAwardTool` messages do), so playset and avatar rules apply. A tool that is already awarded is left alone, so repeated calls are harmless. |
+| `UnAwardTool(player, tool)` | `true` when the tool is no longer awarded. |
+| `IsToolAwarded(player, tool)` / `IsToolUnlocked(player, tool)` | The tool's current state on that player's avatar. |
+| `HasToolSet(player)` | `true` while that player has an avatar with tools. Before a world loads there is none, and every tool call returns `false`. |
+
+`player` is the game's local player index (`0` for the first player, as in `self.InstanceData.playerNum`), and `tool` is a tool identifier such as `ITEM_BASEBALLGUN` or `PROP_SHOVELPACK`. Invalid arguments return `false`. Awards belong to the current avatar. A mod that should keep a tool available re-applies it, for example when the pause menu opens, rather than assuming it survives character swaps or reloads.
+
+```lua
+local menu = ...  -- patch on Presentation/PauseMenu.lua, which returns the PauseMenu class
+if type(menu) == "table" and LiteralCrab.has("AwardTool") and not menu.myToolsWrapped then
+    menu.myToolsWrapped = true
+    local onEnter = menu.onEnter
+    menu.onEnter = function(self, ...)
+        LiteralCrab.AwardTool(self.InstanceData.playerNum, "ITEM_BASEBALLGUN")
+        return onEnter(self, ...)
+    end
+end
+```
 
 ## Guarantees and limits
 
