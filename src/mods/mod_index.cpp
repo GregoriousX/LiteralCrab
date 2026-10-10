@@ -297,9 +297,14 @@ Index Index::load(const std::wstring& modsRoot, std::vector<std::string>& messag
                     pending.push_back(std::move(item));
                 }
             }
+            std::vector<std::string> engine;
+            for (const auto& [feature, value] : section(L"Engine", manifest)) {
+                if (!integer(value)) throw std::runtime_error("[Engine] values must be 0 or 1: " + utf8(feature));
+                if (std::wcstol(value.c_str(), nullptr, 10)) engine.push_back(utf8(feature));
+            }
             if (index.scripts.size() + pending.size() > maxScripts) throw std::runtime_error("more than 4096 scripts");
             // Commit only after the whole mod validated. A mod without scripts may still bring assets.
-            index.mods.push_back({folderName, utf8(name), folder, pending.size()});
+            index.mods.push_back({folderName, utf8(name), folder, pending.size(), std::move(engine)});
             for (auto& item : pending) {
                 auto& list = item.content ? index.contents : index.targets;
                 // Names and markers live in separate namespaces; '\x01' never occurs in either.

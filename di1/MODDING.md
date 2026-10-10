@@ -41,6 +41,10 @@ Presentation/Adventures.lua=replace/adventures.lua
 [Patch]
 ; A chunk may be listed more than once; patches run in file order.
 Presentation/PauseMenu.lua=patches/pause_menu.lua
+
+[Engine]
+; Optional engine features this mod needs (see Engine features). 1 = requested.
+TriggerGuiScreen=1
 ```
 
 Only `[Mod]` is needed for a mod that consists of assets alone. If any script in a mod is missing, outside the mod folder, not a `.lua` file, larger than 4 MiB or precompiled bytecode, the whole mod is skipped and the reason is logged. Other mods still load.
@@ -144,9 +148,19 @@ if type(menu) == "table" and LiteralCrab.has("AwardTool") and not menu.myToolsWr
 end
 ```
 
+## Engine features
+
+Some content needs engine behavior that the PC build lacks. A mod requests such a feature in its `[Engine]` section. LiteralCrab installs it once at startup, and only when at least one enabled mod asks for it. Like adapters, each feature first checks the game's code and is left out (and logged) on any other build. Unknown names are logged and ignored; a value other than an integer skips the mod.
+
+| Feature | Effect |
+| --- | --- |
+| `TriggerGuiScreen` | World graph `TriggerGuiScreen` nodes run their `ScreenCommand`, as in the console builds. The PC build parses the command but its node only passes the signal on. With the feature, a local player triggering the node gets: `0` the Toy Box editor ribbon, `1` Adventures, `2` the Toy Vault (for the host), `3` Catalog, `4` Collection, `5` the Toy Box travel menu (`PauseTravel`). |
+
+`TriggerGuiScreen` uses only the PC game's own routes. The editor ribbon is opened through the same function and checks as the PC editor key, so it is refused where that key would be (outside an editable Toy Box or play set, or while the player is busy). Adventures and the travel menu return to the game on cancel rather than to the pause menu, as on console. Other than the Toy Vault, a command is ignored while the player already has a menu open. A refused command does not pass the signal on, matching the console node. Every command is logged with its result. The feature applies to every such node, including any in the game's own PC content, which were inert before.
+
 ## Guarantees and limits
 
-- With no mods installed, or `[Mods] Enabled=0`, the game's Lua loader is not hooked at all.
+- With no mods installed, or `[Mods] Enabled=0`, the game's Lua loader is not hooked at all. Engine features are hooked only while a mod requests them.
 - The loader checks the signatures of the game's Lua functions before installing. On any other executable it does nothing.
 - Per compiled chunk, the cost is a name lookup without memory allocation. Unnamed chunks are searched only when an installed mod uses `contains:`. Scripts are read and validated only at startup.
 - A native fault while composing a patch disables the mod loader for the rest of the session and is logged. Display features are unaffected.

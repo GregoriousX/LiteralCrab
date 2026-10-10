@@ -5,6 +5,7 @@
 #include "di1/adapters.hpp"
 #include "di1/asset_loader.hpp"
 #include "di1/common.hpp"
+#include "di1/gui_screens.hpp"
 #include "minhook/MinHook.h"
 #include "mods/file_redirect.hpp"
 #include "mods/lua_mods.hpp"
@@ -102,6 +103,17 @@ namespace {
             messages.push_back("Mods: " + std::to_string(redirects) + " file(s) replaced on disk, " + std::to_string(members) +
                 " served to the engine's loader; prepared in " + std::to_string(GetTickCount64() - started) + " ms.");
     }
+
+    // [Engine] features: each is installed once, and only when an enabled mod requests it.
+    void installEngineFeatures(HMODULE host, const std::vector<mods::Mod>& list) {
+        bool guiScreens = false;
+        for (const auto& mod : list)
+            for (const auto& feature : mod.engine) {
+                if (feature == "TriggerGuiScreen") guiScreens = true;
+                else log("Mod %s: unknown engine feature %s ignored.", mod.folder.c_str(), feature.c_str());
+            }
+        if (guiScreens) installGuiScreenCommands(host);
+    }
 }
 
 bool installMods(HMODULE host) {
@@ -118,6 +130,7 @@ bool installMods(HMODULE host) {
         // Assets do not depend on the Lua profile: they only redirect files the game opens.
         installAssets(host, modsRoot, index.mods, messages);
         for (const auto& message : messages) log("%s", message.c_str());
+        installEngineFeatures(host, index.mods);
         if (index.empty()) {
             log("Mods: no script mods to load; game scripts untouched.");
             return true;

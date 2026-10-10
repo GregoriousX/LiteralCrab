@@ -39,6 +39,9 @@ struct Mod {
     std::string name;
     std::wstring path;        // The mod's folder; asset mods read their files from it.
     std::size_t scripts{};    // Overrides and patches; a mod may consist of assets only.
+    // Engine features the mod asks the host to enable ([Engine] <Feature>=1). The host decides
+    // which names it knows; nothing is enabled for a feature no installed mod requests.
+    std::vector<std::string> engine;
 };
 
 class Index {

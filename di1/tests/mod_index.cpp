@@ -67,12 +67,18 @@ int main() {
     write(root / "gamma/p.lua", "return");
     write(root / "short/mod.ini", "[Patch]\ncontains:abc=p.lua\n");
     write(root / "short/p.lua", "return");
+    write(root / "hub/mod.ini", "[Mod]\nName=Hub\n[Engine]\nTriggerGuiScreen=1\nUnused=0\n");
+    write(root / "badengine/mod.ini", "[Engine]\nTriggerGuiScreen=yes\n");
     write(root / "notamod/readme.txt", "no manifest");
 
     std::vector<std::string> messages;
     const auto index = Index::load(root, messages);
     for (const auto& message : messages) std::printf("  %s\n", message.c_str());
-    CHECK(index.mods.size() == 4 && index.mods[0].name == "Alpha Mod" && index.mods[1].name == "beta" && index.mods[2].scripts == 0);
+    CHECK(index.mods.size() == 5 && index.mods[0].name == "Alpha Mod" && index.mods[1].name == "beta" && index.mods[2].scripts == 0);
+    // Engine features: only enabled names are requested; the host decides what they mean.
+    CHECK(index.mods.size() == 5 && index.mods[4].name == "Hub" && index.mods[4].engine == std::vector<std::string>{"TriggerGuiScreen"});
+    CHECK(index.mods.size() == 5 && index.mods[0].engine.empty());
+    CHECK(logged(messages, "Mod badengine skipped: [Engine] values must be 0 or 1: TriggerGuiScreen"));
     CHECK(logged(messages, "Mod short skipped: content marker shorter than 8 bytes"));
     CHECK(index.contents.size() == 2);
     CHECK(logged(messages, "Mod disabled: disabled."));
