@@ -456,7 +456,7 @@ namespace {
         }
         return result;
     }
-    // Returns the timestamp that afterPresent uses to measure blocking, or 0 for untracked calls.
+    // Returns 0 for untracked calls; otherwise the timestamp used for diagnostics (1 when disabled).
     long long beforePresent(IDirect3DDevice9* active, bool outer) {
         if (active != device.load() || !outer) return 0;
         queueWindow();
@@ -466,13 +466,14 @@ namespace {
         else if (statsRequested.load(std::memory_order_relaxed) && statsRequested.exchange(false))
             frameStats.report("focus change");
         framePacer.pace(options.frameLimit);
+        if (!options.diagnostics) return 1;
         const long long start = frameStats.now();
         frameStats.frame(start);
         return start;
     }
     void afterPresent(IDirect3DDevice9* active, HRESULT result, long long start) {
         if (!start) return;
-        frameStats.presented(frameStats.now() - start);
+        if (options.diagnostics) frameStats.presented(frameStats.now() - start);
         if (FAILED(result)) installDeviceMethods(active,deviceExtended);
     }
     HRESULT STDMETHODCALLTYPE present(IDirect3DDevice9* active, const RECT* source, const RECT* destination, HWND overrideWindow, const RGNDATA* region) {
@@ -586,13 +587,13 @@ namespace {
              (message == WM_ACTIVATEAPP && !wParam) || message == WM_KILLFOCUS)) {
             CallScope losingFocus(focusLossDepth);
             const LRESULT result = CallWindowProcW(original,hwnd,message,wParam,lParam);
-            if (message == WM_ACTIVATE) {
+            if (message == WM_ACTIVATE && options.diagnostics) {
                 statsRequested = true;
                 if (const auto observer = focusObserver.load()) observer(false);
             }
             return result;
         }
-        if (message == WM_ACTIVATE) {
+        if (message == WM_ACTIVATE && options.diagnostics) {
             const LRESULT result = CallWindowProcW(original,hwnd,message,wParam,lParam);
             statsRequested = true;
             if (const auto observer = focusObserver.load()) observer(LOWORD(wParam) != WA_INACTIVE);

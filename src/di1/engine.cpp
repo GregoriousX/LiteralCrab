@@ -246,7 +246,7 @@ bool installEngineHooks(HMODULE module) {
         keyboardPatched = true;
         log("System screenshot shortcuts enabled: native keyboard remains foreground/nonexclusive; DISCL_NOWINKEY removed.");
     }
-    setFocusObserver(&logInputState);
+    if (config().diagnostics) setFocusObserver(&logInputState);
     return true;
 }
 void removeEngineHooks() {

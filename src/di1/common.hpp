@@ -18,6 +18,7 @@ struct Config {
     bool rememberMode = true;
     unsigned frameLimit = 120;
     VSync vsync = VSync::Auto;
+    bool diagnostics = false;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;

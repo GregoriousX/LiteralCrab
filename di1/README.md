@@ -17,6 +17,7 @@ AltEnter=1
 RememberMode=1
 FrameLimit=120
 VSync=auto
+Diagnostics=0
 ```
 
 ## Every setting
@@ -34,6 +35,7 @@ VSync=auto
 | `RememberMode` | `1` | Saves a mode selected with Alt+Enter into the INI for the next launch. |
 | `FrameLimit` | `120` | Rendering cap: `15`–`1000` FPS, or `0` for uncapped output. |
 | `VSync` | `auto` | `auto` bypasses VSync when uncapped or when the cap is at least the monitor refresh rate; `on` always synchronizes; `off` always bypasses it. |
+| `Diagnostics` | `0` | Troubleshooting only. `1` writes frame-time statistics (average and worst frame, counts above 20/33/50 ms, time blocked in Present) and the game's mouse/focus state to LiteralCrab.log on each focus change and on exit. Nothing is written per frame. |
 
 ## Frame-rate examples
 
@@ -52,7 +54,9 @@ A cap is a ceiling. Achievable FPS depends on the hardware and scene. VSync and 
 
 Choose the resolution in the game's graphics options. The plugin does not define separate width/height INI entries. `UnlockResolutions=1` exposes supported driver modes; keep `FixFOV=1`, `FixUIAspect=1` and `ScaleMouse=1` for corrected view, UI and input.
 
-Borderless fills the monitor. A render buffer with a different aspect ratio is compensated by the projection/input patches, but selecting a resolution matching the monitor gives the clearest image. Windowed mode retains its decorated window size and position when toggled back from borderless.
+Borderless fills the monitor. A render buffer with a different aspect ratio is compensated by the projection/input patches, but selecting a resolution matching the monitor gives the clearest image.
+
+The plugin marks the game as DPI aware before its window is created. With Windows display scaling (for example 150% on a 4K monitor) the window therefore uses physical pixels: a 4K resolution is shown at 4K instead of being scaled down and stretched again by Windows, and mouse input maps 1:1. Windowed mode retains its decorated window size and position when toggled back from borderless.
 
 ## Alt+Tab and screenshots
 
@@ -65,7 +69,7 @@ Direct ShareX/Alt+Print Screen capture and every ultrawide setup still require i
 - Copy LiteralCrab.asi and LiteralCrab.ini beside DisneyInfinity1.exe and use a compatible 32-bit ASI loader, such as Ultimate ASI Loader as dinput8.dll. Keep the game's original binkw32.dll.
 - Disable another display/resolution ASI before testing LiteralCrab; two plugins patching the same functions can conflict. Preserve the disabled file as a backup.
 - Change the INI while the game is closed. Alt+Enter is the supported live borderless/windowed toggle. Restart to select exclusive fullscreen.
-- Check LiteralCrab.log beside the ASI for the detected game profile, effective display mode, cap and hook failures. The log is replaced on each launch.
+- Check LiteralCrab.log beside the ASI for the detected game profile, effective display mode, cap and hook failures. The log is replaced on each launch. For FPS or mouse problems, set `Diagnostics=1`, reproduce the issue, press Alt+Tab once and attach the log.
 - Unsupported executables are rejected by the version/signature checks. Missing settings use the defaults above. Unrecognized Mode/VSync values fall back to borderless/auto.
 
 Installation requires no changes to characters, gameplay scripts or game assets.
