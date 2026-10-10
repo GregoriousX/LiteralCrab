@@ -17,7 +17,9 @@ set(DI1_COMMON
     src/minhook/trampoline.c
     src/minhook/hde/hde32.c
 )
-add_library(LiteralCrab SHARED ${DI1_COMMON} src/di1/engine.cpp src/di1/main.cpp di1/exports.def)
+# Engine-neutral script mod loader; src/di1/mods.cpp holds the DI1 Lua API profile.
+set(SCRIPT_MODS src/mods/mod_index.cpp src/mods/lua_mods.cpp)
+add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} src/di1/engine.cpp src/di1/mods.cpp src/di1/main.cpp di1/exports.def)
 set_target_properties(LiteralCrab PROPERTIES PREFIX "" SUFFIX ".asi")
 target_include_directories(LiteralCrab PRIVATE include src)
 target_compile_definitions(LiteralCrab PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS LITERALCRAB_VERSION="${PROJECT_VERSION}")
@@ -40,6 +42,37 @@ if(CRABELOADER_DI1_TESTS)
     target_compile_definitions(di1_frame_pacer_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(di1_frame_pacer_tests PRIVATE /W4 /utf-8 /permissive-)
     add_test(NAME di1_frame_pacer COMMAND di1_frame_pacer_tests)
+    add_executable(di1_mod_index_tests di1/tests/mod_index.cpp src/mods/mod_index.cpp)
+    target_include_directories(di1_mod_index_tests PRIVATE src)
+    target_compile_definitions(di1_mod_index_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(di1_mod_index_tests PRIVATE /W4 /utf-8 /permissive-)
+    add_test(NAME di1_mod_index COMMAND di1_mod_index_tests)
+    # The mod runtime is exercised against the reference Lua 5.1.5 interpreter, the version the
+    # game embeds. Downloaded from lua.org at configure time and pinned by hash; tests only.
+    option(CRABELOADER_LUA_TESTS "Test the script mod runtime against reference Lua 5.1.5" ON)
+    if(CRABELOADER_LUA_TESTS)
+        include(FetchContent)
+        FetchContent_Declare(lua51
+            URL https://www.lua.org/ftp/lua-5.1.5.tar.gz
+            URL_HASH SHA256=2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(lua51)
+        set(LUA51_MODULES lapi lcode ldebug ldo ldump lfunc lgc llex lmem lobject lopcodes lparser
+            lstate lstring ltable ltm lundump lvm lzio lauxlib lbaselib ldblib liolib lmathlib loslib
+            ltablib lstrlib loadlib linit)
+        list(TRANSFORM LUA51_MODULES PREPEND "${lua51_SOURCE_DIR}/src/")
+        list(TRANSFORM LUA51_MODULES APPEND ".c")
+        add_library(lua51_reference STATIC ${LUA51_MODULES})
+        target_include_directories(lua51_reference PUBLIC "${lua51_SOURCE_DIR}/src")
+        target_compile_definitions(lua51_reference PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_compile_options(lua51_reference PRIVATE /W0)
+        add_executable(di1_lua_mods_tests di1/tests/lua_mods.cpp ${SCRIPT_MODS})
+        target_include_directories(di1_lua_mods_tests PRIVATE src)
+        target_compile_definitions(di1_lua_mods_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        target_compile_options(di1_lua_mods_tests PRIVATE /W4 /utf-8 /permissive-)
+        target_link_libraries(di1_lua_mods_tests PRIVATE lua51_reference)
+        add_test(NAME di1_lua_mods COMMAND di1_lua_mods_tests)
+    endif()
     add_executable(di1_d3d9_smoke di1/tests/d3d9_smoke.cpp ${DI1_COMMON})
     target_include_directories(di1_d3d9_smoke PRIVATE include src)
     target_compile_definitions(di1_d3d9_smoke PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS LITERALCRAB_VERSION="${PROJECT_VERSION}")

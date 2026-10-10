@@ -1,6 +1,6 @@
 # LiteralCrab configuration guide
 
-Edit **LiteralCrab.ini** beside **LiteralCrab.asi**, then restart the game. All options belong in the `[Display]` section. Use `1` to enable a switch and `0` to disable it.
+Edit **LiteralCrab.ini** beside **LiteralCrab.asi**, then restart the game. Display options belong in the `[Display]` section; the script mod loader uses `[Mods]`. Use `1` to enable a switch and `0` to disable it.
 
 ## Complete default configuration
 
@@ -18,6 +18,10 @@ RememberMode=1
 FrameLimit=120
 VSync=auto
 Diagnostics=0
+
+[Mods]
+Enabled=1
+Trace=0
 ```
 
 ## Every setting
@@ -36,6 +40,8 @@ Diagnostics=0
 | `FrameLimit` | `120` | Rendering cap: `15`–`1000` FPS, or `0` for uncapped output. |
 | `VSync` | `auto` | `auto` bypasses VSync when uncapped or when the cap is at least the monitor refresh rate; `on` always synchronizes; `off` always bypasses it. |
 | `Diagnostics` | `0` | Troubleshooting only. `1` writes frame-time statistics (average and worst frame, counts above 20/33/50 ms, time blocked in Present) and the game's mouse/focus state to LiteralCrab.log on each focus change and on exit. Nothing is written per frame. |
+| `[Mods]` `Enabled` | `1` | Loads Lua script mods from the `mods` folder beside the ASI. With no mods installed nothing is hooked. `0` leaves every game script untouched. See [MODDING.md](MODDING.md). |
+| `[Mods]` `Trace` | `0` | For mod authors. `1` logs the name of every Lua chunk the game compiles, which is the name a mod targets. |
 
 ## Frame-rate examples
 
@@ -72,4 +78,4 @@ Direct ShareX/Alt+Print Screen capture and every ultrawide setup still require i
 - Check LiteralCrab.log beside the ASI for the detected game profile, effective display mode, cap and hook failures. The log is replaced on each launch. For FPS or mouse problems, set `Diagnostics=1`, reproduce the issue, press Alt+Tab once and attach the log.
 - Unsupported executables are rejected by the version/signature checks. Missing settings use the defaults above. Unrecognized Mode/VSync values fall back to borderless/auto.
 
-Installation requires no changes to characters, gameplay scripts or game assets.
+Installation requires no changes to characters, gameplay scripts or game assets. Script mods are optional, separate downloads; LiteralCrab itself ships none.

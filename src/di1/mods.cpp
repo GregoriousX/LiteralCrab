@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// DI1 profile for the script mod loader: the measured Lua 5.1 C API of the supported build.
+// Another game needs only its own table of addresses and signatures; src/mods is shared.
+#include "di1/mods.hpp"
+#include "di1/common.hpp"
+#include "minhook/MinHook.h"
+#include "mods/lua_mods.hpp"
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
+#include <string>
+#include <vector>
+
+namespace crabe::di1 {
+namespace {
+    struct Function {
+        std::uint32_t rva;
+        const char* prologue;
+        std::uint32_t callSite;  // A stdlib call to this function confirms its identity.
+    };
+    constexpr std::uint32_t loadBufferRva = 0x65C40;
+    constexpr Function luaFunctions[] = {
+        {loadBufferRva, "83 EC 08 8B 44 24 10 8B 54 24 18 8B 4C 24 14 52", 0x73239},
+        {0x63EA0, "8B 4C 24 04 8B 41 08 2B 41 0C C1 F8 03 C3", 0x72A79},              // lua_gettop
+        {0x63EB0, "8B 4C 24 08 8B 44 24 04 85 C9 78 37 8B 50 0C", 0x72AF9},           // lua_settop
+        {0x64060, "8B 4C 24 08 56 8B 74 24 08 8B D6 E8 00 FC FF FF", 0x72AA3},       // lua_pushvalue
+        {0x63F90, "56 8B 74 24 08 57 8B 7C 24 10 81 FF EF D8 FF FF", 0x7359A},       // lua_insert
+        {0x646A0, "56 57 8B 7C 24 0C 8B 47 10 8B 48 44 3B 48 40", 0x73A93},          // lua_pushcclosure
+        {0x64D20, "8B 4C 24 10 83 EC 08 56 8B 74 24 10 85 C9 75 04", 0x73584},       // lua_pcall
+        {0x64360, "56 8B 74 24 08 57 8B 7C 24 10 8B CF 8B D6", 0x72ABE},             // lua_tolstring
+    };
+
+    bool matches(std::uintptr_t address, const char* hex) {
+        for (std::size_t offset = 0;; ++offset) {
+            while (*hex == ' ') ++hex;
+            if (!*hex) return true;
+            char* next{};
+            const auto byte = std::strtoul(hex, &next, 16);
+            if (next == hex || byte > 0xFF || !readable(reinterpret_cast<const void*>(address + offset), 1) ||
+                *reinterpret_cast<const unsigned char*>(address + offset) != byte) return false;
+            hex = next;
+        }
+    }
+
+    bool calls(std::uintptr_t base, std::uint32_t site, std::uint32_t target) {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(base + site);
+        return readable(bytes, 5) && bytes[0] == 0xE8 &&
+            base + site + 5 + *reinterpret_cast<const std::int32_t*>(bytes + 1) == base + target;
+    }
+
+    template <class T> void bind(T& slot, std::uintptr_t address) { slot = reinterpret_cast<T>(address); }
+}
+
+bool installMods(HMODULE host) {
+    const auto& settings = config();
+    if (!settings.mods) {
+        log("Mods: disabled by configuration.");
+        return true;
+    }
+    if (!*pluginDirectory()) return false;
+    try {
+        std::vector<std::string> messages;
+        auto index = mods::Index::load(std::wstring(pluginDirectory()) + L"mods", messages);
+        for (const auto& message : messages) log("%s", message.c_str());
+        if (index.empty()) {
+            log("Mods: no script mods to load; game scripts untouched.");
+            return true;
+        }
+        const auto base = reinterpret_cast<std::uintptr_t>(host);
+        for (const auto& function : luaFunctions)
+            if (!matches(base + function.rva, function.prologue) || !calls(base, function.callSite, function.rva)) {
+                log("Mods: Lua API signature differs at RVA 0x%X; mod loader not installed.", function.rva);
+                return false;
+            }
+        mods::LuaApi api{};
+        bind(api.getTop, base + luaFunctions[1].rva);
+        bind(api.setTop, base + luaFunctions[2].rva);
+        bind(api.pushValue, base + luaFunctions[3].rva);
+        bind(api.insert, base + luaFunctions[4].rva);
+        bind(api.pushClosure, base + luaFunctions[5].rva);
+        bind(api.pcall, base + luaFunctions[6].rva);
+        bind(api.toLString, base + luaFunctions[7].rva);
+        auto* target = reinterpret_cast<void*>(base + loadBufferRva);
+        void* original{};
+        if (const auto status = MH_CreateHook(target, reinterpret_cast<void*>(&mods::loadBuffer), &original); status != MH_OK) {
+            log("Mods: hook refused: %s.", MH_StatusToString(status));
+            return false;
+        }
+        bind(api.loadBuffer, reinterpret_cast<std::uintptr_t>(original));
+        const auto modCount = index.mods.size(), targets = index.targets.size();
+        mods::configure(api, std::move(index), &log, settings.modTrace);
+        if (const auto status = MH_EnableHook(target); status != MH_OK) {
+            MH_RemoveHook(target);
+            log("Mods: hook refused: %s.", MH_StatusToString(status));
+            return false;
+        }
+        log("Mods: %zu mod(s) loaded, %zu game chunk(s) targeted.%s", modCount, targets,
+            settings.modTrace ? " Trace logs every compiled Lua chunk." : "");
+        return true;
+    } catch (const std::exception& failure) {
+        log("Mods: loader unavailable: %s.", failure.what());
+        return false;
+    }
+}
+}

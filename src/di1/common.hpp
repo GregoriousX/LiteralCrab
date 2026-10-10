@@ -19,9 +19,13 @@ struct Config {
     unsigned frameLimit = 120;
     VSync vsync = VSync::Auto;
     bool diagnostics = false;
+    bool mods = true;
+    bool modTrace = false;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;
+// Directory holding the ASI and LiteralCrab.ini, with a trailing backslash.
+const wchar_t* pluginDirectory() noexcept;
 void saveMode(Mode mode);
 void log(const char* format, ...);
 bool readable(const void* address, std::size_t length) noexcept;

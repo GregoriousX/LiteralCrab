@@ -2,6 +2,7 @@
 #include "di1/common.hpp"
 #include "di1/display.hpp"
 #include "di1/engine.hpp"
+#include "di1/mods.hpp"
 #include "minhook/MinHook.h"
 #include <atomic>
 #include <cwchar>
@@ -54,7 +55,9 @@ namespace {
         HMODULE pinned{};
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&initialize), &pinned);
-        crabe::di1::log("READY: DI1 display hooks installed before engine startup. Gameplay/characters untouched.");
+        crabe::di1::log("READY: DI1 display hooks installed before engine startup.");
+        // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
+        crabe::di1::installMods(host);
     }
 }
 extern "C" void WINAPI InitializeASI() { initialize(); }

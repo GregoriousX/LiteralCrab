@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Mod discovery, validation and chunk matching, without a Lua VM.
+#include "mods/mod_index.hpp"
+#include <windows.h>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+using namespace crabe::mods;
+namespace fs = std::filesystem;
+
+static int failures = 0;
+#define CHECK(condition) do { if (!(condition)) { std::printf("FAIL line %d: %s\n", __LINE__, #condition); ++failures; } } while (0)
+
+static void write(const fs::path& file, std::string_view text) {
+    fs::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary).write(text.data(), static_cast<std::streamsize>(text.size()));
+}
+
+static bool logged(const std::vector<std::string>& messages, std::string_view text) {
+    for (const auto& message : messages) if (message.find(text) != std::string::npos) return true;
+    return false;
+}
+
+int main() {
+    char buffer[maxChunkName];
+    CHECK(normalize("@Presentation\\Adventures.LUA", buffer) == 27 &&
+        std::string_view(buffer, 27) == "presentation/adventures.lua");
+    CHECK(normalize("=./a.lua", buffer) == 5 && std::string_view(buffer, 5) == "a.lua");
+    CHECK(normalize("@", buffer) == 0);
+    CHECK(normalize(std::string(maxChunkName, 'a'), buffer) == 0);
+
+    // The game's precompiled chunks carry their source name in the header.
+    const char header[] = "\x1bLua\x51\x00\x01\x04\x04\x04\x08\x00\x1d\x00\x00\x00@Presentation/Adventures.lua\x00\x00\x00";
+    CHECK(chunkIdentity(header, sizeof(header) - 1, "=bytes") == "@Presentation/Adventures.lua");
+    CHECK(chunkIdentity(header, 20, "=bytes") == "=bytes");  // Truncated header falls back.
+    CHECK(chunkIdentity("return 1", 8, "@x.lua") == "@x.lua");
+    CHECK(chunkIdentity("return 1", 8, nullptr).empty());
+    CHECK(luaQuote("a\"\\\n\x7f") == "\"a\\\"\\\\\\010\\127\"");
+
+    wchar_t temp[MAX_PATH]{};
+    GetTempPathW(MAX_PATH, temp);
+    const fs::path root = fs::path(temp) / (L"literalcrab-mods-" + std::to_wstring(GetCurrentProcessId()));
+    fs::remove_all(root);
+    write(root / "alpha/mod.ini",
+        "[Mod]\nName=Alpha Mod\n[Options]\nFlag=1\nText=hello world\nNegative=-3\n"
+        "[Override]\nPresentation\\Adventures.lua=scripts/adventures.lua\n"
+        "[Patch]\npresentation/pausemenu.lua=patches/pause.lua\npresentation/pausemenu.lua=patches/pause2.lua\n");
+    write(root / "alpha/user.ini", "[Options]\nFlag=0\n");
+    write(root / "alpha/scripts/adventures.lua", "return 'override'");
+    write(root / "alpha/patches/pause.lua", "local result = ...");
+    write(root / "alpha/patches/pause2.lua", "local result = ...");
+    write(root / "beta/mod.ini", "[Override]\nadventures.lua=a.lua\npresentation/adventures.lua=a.lua\n[Patch]\nadventures.lua=p.lua\n");
+    write(root / "beta/a.lua", "return 'beta'");
+    write(root / "beta/p.lua", "return");
+    write(root / "disabled/mod.ini", "[Patch]\nx.lua=p.lua\n");
+    write(root / "disabled/user.ini", "[Mod]\nEnabled=0\n");
+    write(root / "disabled/p.lua", "return");
+    write(root / "escape/mod.ini", "[Patch]\nescape.lua=../alpha/patches/pause.lua\n");
+    write(root / "bytecode/mod.ini", "[Patch]\nbytecode.lua=p.lua\n");
+    write(root / "bytecode/p.lua", std::string_view("\x1bLua\x51", 5));
+    write(root / "missing/mod.ini", "[Patch]\nfine.lua=p.lua\nmissing.lua=absent.lua\n");
+    write(root / "missing/p.lua", "return");
+    write(root / "empty/mod.ini", "[Mod]\nName=Empty\n");
+    write(root / "notamod/readme.txt", "no manifest");
+
+    std::vector<std::string> messages;
+    const auto index = Index::load(root, messages);
+    for (const auto& message : messages) std::printf("  %s\n", message.c_str());
+    CHECK(index.mods.size() == 2 && index.mods[0].name == "Alpha Mod" && index.mods[1].name == "beta");
+    CHECK(logged(messages, "Mod disabled: disabled."));
+    CHECK(logged(messages, "Mod escape skipped"));
+    CHECK(logged(messages, "Mod bytecode skipped"));
+    CHECK(logged(messages, "Mod missing skipped"));  // One bad file rejects the whole mod.
+    CHECK(logged(messages, "Mod empty skipped"));
+    CHECK(logged(messages, "override of presentation/adventures.lua ignored; alpha already replaces it"));
+    CHECK(index.targets.size() == 3);
+
+    const Target* matches[maxMatches];
+    // Precompiled game chunk: the longer configured path is the more specific match.
+    auto count = index.find(chunkIdentity(header, sizeof(header) - 1, "=bytes"), matches);
+    CHECK(count == 2 && matches[0]->path == "presentation/adventures.lua" && matches[1]->path == "adventures.lua");
+    CHECK(count == 2 && index.scripts[matches[0]->override].source == "return 'override'");
+    CHECK(count == 2 && matches[0]->patches.empty() && matches[1]->patches.size() == 1);
+    CHECK(count == 2 && index.scripts[matches[1]->override].chunk == "@mods/beta/a.lua");
+    count = index.find("@ASSETS\\Presentation\\PauseMenu.lua", matches);
+    CHECK(count == 1 && matches[0]->patches.size() == 2);
+    if (count == 1) {
+        const auto& patch = index.scripts[matches[0]->patches[0]];
+        CHECK(patch.chunk == "@mods/alpha/patches/pause.lua" && patch.body == "local result = ...");
+        // user.ini overrides the shipped default; integers stay numbers, text is quoted.
+        CHECK(patch.source.find("[\"Flag\"]=0,[\"Text\"]=\"hello world\",[\"Negative\"]=-3,") != std::string::npos);
+        CHECK(patch.source.find("local label = \"alpha/patches/pause.lua\"") != std::string::npos);
+    }
+    CHECK(index.find("@notpresentation/adventures.lua", matches) == 1);  // Suffix must start at '/'.
+    CHECK(index.find("@presentation/other.lua", matches) == 0);
+    CHECK(index.find("", matches) == 0);
+    CHECK(Index::load(root / "absent", messages).empty());
+
+    fs::remove_all(root);
+    if (failures) return 1;
+    std::puts("PASS: mod discovery, validation and chunk matching");
+    return 0;
+}

@@ -4,11 +4,13 @@
 #include <cstdio>
 #include <cwchar>
 #include <cstring>
+#include <string>
 
 namespace crabe::di1 {
 namespace {
     Config settings;
     wchar_t iniPath[32768]{};
+    std::wstring directory;
     HANDLE logFile = INVALID_HANDLE_VALUE;
     SRWLOCK logLock = SRWLOCK_INIT;
 }
@@ -19,6 +21,7 @@ void openLogAndConfig(HMODULE module) {
     wchar_t* slash = wcsrchr(path, L'\\');
     if (!slash) return;
     *(slash + 1) = L'\0';
+    directory = path;
     swprintf_s(iniPath, L"%sLiteralCrab.ini", path);
     wchar_t logfile[32768]{};
     swprintf_s(logfile, L"%sLiteralCrab.log", path);
@@ -47,6 +50,8 @@ void openLogAndConfig(HMODULE module) {
     else if (!_wcsicmp(sync,L"on")) settings.vsync = VSync::On;
     else if (_wcsicmp(sync,L"auto")) log("Invalid VSync; using auto.");
     settings.diagnostics = GetPrivateProfileIntW(L"Display", L"Diagnostics", 0, iniPath) != 0;
+    settings.mods = GetPrivateProfileIntW(L"Mods", L"Enabled", 1, iniPath) != 0;
+    settings.modTrace = GetPrivateProfileIntW(L"Mods", L"Trace", 0, iniPath) != 0;
     log("LiteralCrab DI1 ASI " LITERALCRAB_VERSION "; upstream dev 7f251e8eec5de534a2ed9b8efa0694f259706f0f.");
     log("Display mode: %ls; resolution unlock=%d; UI aspect=%d; FOV=%d.",
         modeName(settings.mode), settings.unlockResolutions, settings.fixUiAspect, settings.fixFov);
@@ -55,6 +60,7 @@ void openLogAndConfig(HMODULE module) {
     if (settings.diagnostics) log("Diagnostics enabled: frame statistics and input state are logged on focus changes.");
 }
 const Config& config() noexcept { return settings; }
+const wchar_t* pluginDirectory() noexcept { return directory.c_str(); }
 void saveMode(Mode mode) {
     if (settings.rememberMode && iniPath[0] &&
         !WritePrivateProfileStringW(L"Display", L"Mode", modeName(mode), iniPath))
