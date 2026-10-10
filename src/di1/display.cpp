@@ -50,6 +50,37 @@ namespace {
     std::vector<Method> createMethods, createExMethods, resetMethods, resetExMethods, presentMethods, presentExMethods, releaseMethods, cooperativeMethods;
     SRWLOCK hookLock = SRWLOCK_INIT;
     FramePacer framePacer;
+    std::atomic<void (*)(bool)> focusObserver{};
+    std::atomic<bool> statsRequested{};
+    // Present cadence collected in memory on the render thread; written only on request.
+    struct FrameStats {
+        long long frequency{}, last{}, frames{}, intervalSum{}, intervalMax{}, presentSum{}, presentMax{};
+        unsigned over20{}, over33{}, over50{};
+        long long now() { LARGE_INTEGER value{}; QueryPerformanceCounter(&value); return value.QuadPart; }
+        void frame(long long current) {
+            if (!frequency) { LARGE_INTEGER value{}; QueryPerformanceFrequency(&value); frequency = value.QuadPart; }
+            if (last) {
+                const long long interval = current - last;
+                ++frames; intervalSum += interval; intervalMax = (std::max)(intervalMax, interval);
+                if (interval * 50 > frequency) ++over20;
+                if (interval * 30 > frequency) ++over33;
+                if (interval * 20 > frequency) ++over50;
+            }
+            last = current;
+        }
+        void presented(long long blocked) { presentSum += blocked; presentMax = (std::max)(presentMax, blocked); }
+        void report(const char* reason) {
+            if (frames && frequency) {
+                const double ms = 1000.0 / static_cast<double>(frequency);
+                log("Frame stats (%s): %lld frames, avg %.2f ms (%.1f FPS), worst %.2f ms; >20ms %u, >33ms %u, >50ms %u; "
+                    "Present blocked avg %.2f ms, worst %.2f ms.", reason, frames, intervalSum * ms / frames,
+                    frames * static_cast<double>(frequency) / intervalSum, intervalMax * ms, over20, over33, over50,
+                    presentSum * ms / frames, presentMax * ms);
+            }
+            const auto keep = frequency;
+            *this = {}; frequency = keep;
+        }
+    } frameStats;
 
     LRESULT CALLBACK wndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     HRESULT STDMETHODCALLTYPE reset(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
@@ -425,25 +456,33 @@ namespace {
         }
         return result;
     }
-    void beforePresent(IDirect3DDevice9* active, bool outer) {
-        if (active != device.load() || !outer) return;
+    // Returns the timestamp that afterPresent uses to measure blocking, or 0 for untracked calls.
+    long long beforePresent(IDirect3DDevice9* active, bool outer) {
+        if (active != device.load() || !outer) return 0;
         queueWindow();
         // No periodic logging here: log() performs synchronous file I/O on the render thread.
         if (++presents == 1)
             log("First Present: render %ux%u; managed=%d.",bufferWidth.load(),bufferHeight.load(),managed.load());
+        else if (statsRequested.load(std::memory_order_relaxed) && statsRequested.exchange(false))
+            frameStats.report("focus change");
         framePacer.pace(options.frameLimit);
+        const long long start = frameStats.now();
+        frameStats.frame(start);
+        return start;
     }
-    void afterPresent(IDirect3DDevice9* active, HRESULT result, bool outer) {
-        if (FAILED(result) && outer && active == device.load()) installDeviceMethods(active,deviceExtended);
+    void afterPresent(IDirect3DDevice9* active, HRESULT result, long long start) {
+        if (!start) return;
+        frameStats.presented(frameStats.now() - start);
+        if (FAILED(result)) installDeviceMethods(active,deviceExtended);
     }
     HRESULT STDMETHODCALLTYPE present(IDirect3DDevice9* active, const RECT* source, const RECT* destination, HWND overrideWindow, const RGNDATA* region) {
         const auto originalPresent = reinterpret_cast<Present>(originalFor(active,17,presentMethods));
         if (!originalPresent) return D3DERR_INVALIDCALL;
         const bool outer = presentDepth == 0;
         CallScope scope(presentDepth);
-        beforePresent(active,outer);
+        const long long start = beforePresent(active,outer);
         const HRESULT result = originalPresent(active,source,destination,overrideWindow,region);
-        afterPresent(active,result,outer);
+        afterPresent(active,result,start);
         return result;
     }
     HRESULT STDMETHODCALLTYPE presentEx(IDirect3DDevice9Ex* active, const RECT* source, const RECT* destination,
@@ -452,9 +491,9 @@ namespace {
         if (!originalPresent) return D3DERR_INVALIDCALL;
         const bool outer = presentDepth == 0;
         CallScope scope(presentDepth);
-        beforePresent(active,outer);
+        const long long start = beforePresent(active,outer);
         const HRESULT result = originalPresent(active,source,destination,overrideWindow,region,flags);
-        afterPresent(active,result,outer);
+        afterPresent(active,result,start);
         return result;
     }
     ULONG STDMETHODCALLTYPE release(IDirect3DDevice9* active) {
@@ -463,7 +502,7 @@ namespace {
         const bool primary = active == device.load();
         const ULONG count = originalRelease(active);
         if (primary && count == 0) {
-            device = nullptr; detachWindow();
+            device = nullptr; detachWindow(); frameStats.report("device released");
             if (deviceParent) { deviceParent->Release(); deviceParent = nullptr; }
             log("D3D9 device released.");
         }
@@ -546,7 +585,18 @@ namespace {
             ((message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE) ||
              (message == WM_ACTIVATEAPP && !wParam) || message == WM_KILLFOCUS)) {
             CallScope losingFocus(focusLossDepth);
-            return CallWindowProcW(original,hwnd,message,wParam,lParam);
+            const LRESULT result = CallWindowProcW(original,hwnd,message,wParam,lParam);
+            if (message == WM_ACTIVATE) {
+                statsRequested = true;
+                if (const auto observer = focusObserver.load()) observer(false);
+            }
+            return result;
+        }
+        if (message == WM_ACTIVATE) {
+            const LRESULT result = CallWindowProcW(original,hwnd,message,wParam,lParam);
+            statsRequested = true;
+            if (const auto observer = focusObserver.load()) observer(LOWORD(wParam) != WA_INACTIVE);
+            return result;
         }
         if (message == WM_SIZE && wParam != SIZE_MINIMIZED && !applying) dirty = true;
         if (message == WM_NCDESTROY) {
@@ -584,6 +634,7 @@ void removeDisplayHooks() {
         methods->clear();
     }
 }
+void setFocusObserver(void (*observer)(bool active)) { focusObserver = observer; }
 DisplaySnapshot displaySnapshot() {
     return {window.load(), bufferWidth.load(), bufferHeight.load(), requestedMode.load(), managed.load(), presents.load()};
 }

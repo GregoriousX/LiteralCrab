@@ -26,6 +26,30 @@ namespace {
     void* aspectOriginal{};
     bool keyboardPatched{};
     void* (__cdecl* defaultTarget)(){};
+    // Diagnostics only: WindowsSystemInputDriver global and its vtable in the supported build.
+    constexpr std::uint32_t inputDriverRva = 0x121D060;
+    constexpr std::uint32_t inputDriverVtableRva = 0xE9BAD4;
+    void logInputState(bool active) {
+        const auto slot = reinterpret_cast<const std::uintptr_t*>(base + inputDriverRva);
+        const auto driver = readable(slot, sizeof(*slot)) ? reinterpret_cast<const BYTE*>(*slot) : nullptr;
+        if (!driver || !readable(driver, 0x228) ||
+            *reinterpret_cast<const std::uintptr_t*>(driver) != base + inputDriverVtableRva) {
+            log("Focus %s: input driver unavailable.", active ? "gained" : "lost"); return;
+        }
+        const auto field = [driver](unsigned offset) { return *reinterpret_cast<const int*>(driver + offset); };
+        const auto flag = [driver](unsigned offset) { return static_cast<int>(driver[offset]); };
+        const auto hwnd = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(field(0x218)));
+        const auto display = displaySnapshot();
+        RECT client{}, outer{}; POINT cursor{};
+        GetClientRect(hwnd, &client); GetWindowRect(hwnd, &outer); GetCursorPos(&cursor);
+        CURSORINFO shown{sizeof(shown)}; GetCursorInfo(&shown);
+        log("Focus %s: input active=%d locked=%d cursorFlag=%d centre=%d,%d dinput=%d,%d; input hwnd %s render hwnd; "
+            "client %ldx%ld, outer %ld,%ld-%ld,%ld, render %ux%u; cursor %ld,%ld shown=%d.",
+            active ? "gained" : "lost", flag(0xFC), flag(0x21E), flag(0x21F), field(0x220), field(0x224),
+            field(0xE0), field(0xE4), hwnd == display.window ? "==" : "!=", client.right, client.bottom,
+            outer.left, outer.top, outer.right, outer.bottom, display.width, display.height,
+            cursor.x, cursor.y, (shown.flags & CURSOR_SHOWING) != 0);
+    }
     float physicalAspect(float fallback) {
         const auto display = displaySnapshot();
         RECT client{};
@@ -222,9 +246,11 @@ bool installEngineHooks(HMODULE module) {
         keyboardPatched = true;
         log("System screenshot shortcuts enabled: native keyboard remains foreground/nonexclusive; DISCL_NOWINKEY removed.");
     }
+    setFocusObserver(&logInputState);
     return true;
 }
 void removeEngineHooks() {
+    setFocusObserver(nullptr);
     if (keyboardPatched) { writeKeyboardFlags(0x16); keyboardPatched = false; }
     for (auto rva : {aspectRva, fovRva, viewportRva, containsRva, supportedRva}) {
         MH_DisableHook(reinterpret_cast<void*>(base + rva));
