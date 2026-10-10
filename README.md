@@ -1,115 +1,67 @@
-# CrabeLoader v1.0.0
+# LiteralCrab
 
-[![CI - Build & Test](https://github.com/LucasLhomme/CrabeLoader/actions/workflows/ci.yml/badge.svg)](https://github.com/LucasLhomme/CrabeLoader/actions/workflows/ci.yml)
-[![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Win32%20(x86)-lightgrey.svg)]()
+LiteralCrab is a 32-bit ASI plugin for **Disney Infinity 1.0 Gold Edition (Windows PC)**. It adds display and frame-rate options based on [CrabeLoader](https://github.com/LucasLhomme/CrabeLoader).
 
-An open-source, high-performance mod loader and runtime extensibility platform for **Disney Infinity 3.0: Gold Edition (PC)**.
+This is a display-focused port, not a port of CrabeLoader's Disney Infinity 3.0 modding features.
 
-CrabeLoader attaches as a proxy `bink2w32.dll`, intercepting DirectX 11 presentation calls and the internal Lua 5.1 virtual machine to provide a resilient, modern environment for community modifications.
+## Features
 
----
+- Borderless, windowed and exclusive fullscreen modes.
+- Additional resolutions and aspect ratios, including ultrawide displays.
+- Field-of-view correction and centered 16:9 menus and HUD.
+- Mouse scaling when the window and rendering resolutions differ.
+- Configurable FPS limit (15–1000 FPS or uncapped) and VSync.
+- Better Alt+Tab behavior and support for Windows screenshot shortcuts in borderless/windowed modes.
 
-## Architecture Overview
-
-CrabeLoader v1.0.0 follows a strict **decoupled, layered architecture**:
-
-* **Core Platform (C++23):** Operates strictly as a neutral infrastructure layer. It contains **zero gameplay logic, zero cheats, and zero hardcoded menus**. Its responsibilities are limited to DirectX 11 hooks, Structured Exception Handling (SEH) crash guards, a multi-buffer UI command pipeline, and generic memory primitives.
-* **Modding Layer (Lua 5.1):** All gameplay mechanics, user interfaces (such as [CrabeMenu](https://github.com/LucasLhomme/CrabeMenu)), camera modifications, custom characters, and skill trees execute as sandboxed Lua modules.
-
----
-
-## Key Capabilities
-
-* **Embedded Runtime:** Core API modules are embedded directly within `bink2w32.dll`, removing disk dependencies in the game root.
-* **Thread-Safe Decoupled UI (`DrawBuffer`):** Mod UI logic executes safely on the script thread, publishing commands that are rendered natively on the DirectX 11 Present loop without thread contention or VM state corruption.
-* **Hardware Exception Armor (SEH):** Unhandled native exceptions and invalid memory operations are trapped and logged to `loader.log`, preventing silent crashes to desktop.
-* **Isolated Environment Sandboxes:** Each mod operates in an isolated environment with read-only proxy protection over critical engine namespaces (`Game`, `table`, `string`, `math`, `_G`).
-* **Runtime Hot-Reloading (`F4`):** Scripts and modular packages in `mods/` can be reloaded on the fly in under 50ms without restarting the executable.
-* **Dynamic Instruction-Boundary Code Caves:** Integrated HDE32 disassembler guarantees safe hook installation without truncating multi-byte x86 instructions.
-* **Display & Focus Management:** Integrated Borderless Windowed mode toggle with automatic cursor liberation during overlay interactions.
-
----
-
-## Modular Mod Layout
-
-All user modifications reside strictly inside the `mods/` directory:
-
-```text
-Disney Infinity 3.0 Gold Edition/
-├── bink2w32.dll              <- CrabeLoader proxy DLL
-├── bink2w32_orig.dll         <- Original game Bink DLL
-└── mods/                     <- Target mod directory
-    ├── standalone_mod.lua    <- Single-file mod
-    └── hero_expansion/       <- Modular mod package
-        ├── mod.json          <- Manifest metadata
-        ├── main.lua          <- Entry script
-        ├── characters/       <- Bundled character definitions
-        └── skilltrees/       <- Bundled progression patches
-```
-
----
-
-## Documentation Suite
-
-Comprehensive technical guides are available in the [`docs/`](docs/) directory:
-
-| Document | Description |
-| :--- | :--- |
-| **[Mod Development Guide](docs/guides/mods.md)** | Lifecycle hooks (`onInit`, `onUpdate`, `onDraw`, `onShutdown`), Dear ImGui widgets, and event dispatching. |
-| **[Skill Tree Guide](docs/guides/skilltrees.md)** | Progression tree overrides (`.lua`) and binary chunk patches (`.patch`). |
-| **[Character & Figurine Guide](docs/guides/characters.md)** | Figurine resolution pipeline, custom character registration, and costume variants. |
-| **[Update Check & Installer](docs/guides/updates_and_installer.md)** | The launch-time update prompt (and how to disable it), `CrabeInstaller.exe`, and what each sends or changes. |
-| **[API Type Definitions](docs/crabe_api.def.lua)** | EmmyLua annotations providing full IntelliSense and autocomplete for IDEs. |
-| **[Architecture Blueprint](docs/ARCHITECTURE_BLUEPRINT.md)** | Core architectural invariants, threading rules, and layer definitions. |
-
----
+The plugin does not change gameplay, characters or game simulation speed.
 
 ## Installation
 
-Each [release](https://github.com/LucasLhomme/CrabeLoader/releases/latest) offers two ways to install. Both end with the same result, and the release also lists SHA-256 checksums (`SHA256SUMS.txt`).
+1. Download **LiteralCrab-DI1-0.1.0-x86.zip** from [Releases](https://github.com/GregoriousX/LiteralCrab/releases).
+2. Copy `LiteralCrab.asi` and `LiteralCrab.ini` into the game folder, next to `DisneyInfinity1.exe`.
+3. Install a compatible **32-bit ASI loader**. The tested option is [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader), installed as `dinput8.dll`.
+4. Start the game.
 
-### Option A: `CrabeInstaller.exe` (recommended)
+Keep the original `binkw32.dll` unchanged. If you have another display or resolution mod installed, read the [installation notes](di1/README.md) to avoid conflicts.
 
-Run it and follow the prompts. It finds the game in your Steam libraries (or lets you pick the folder), installs the proxy, keeps the game's own `bink2w32.dll` as `bink2w32_orig.dll`, and creates the `mods/` folder with a short readme. Running it again updates CrabeLoader and leaves your mods and settings alone. It never overwrites a `bink2w32.dll` it does not recognise; see the [installer guide](docs/guides/updates_and_installer.md).
+## Configuration
 
-### Option B: manual
+Edit `LiteralCrab.ini` to change the settings:
 
-1. In your game installation folder (e.g., `<steam-library>\steamapps\common\Disney Infinity 3.0 Gold Edition`), rename the original `bink2w32.dll` to `bink2w32_orig.dll`.
-2. Copy the release `bink2w32.dll` into the game root directory.
-3. Create a `mods/` directory next to it.
-
-### Then
-
-1. Place your mods or packages into the `mods/` directory (such as **[CrabeMenu](https://github.com/LucasLhomme/CrabeMenu)** for an interactive in-game menu).
-2. Launch `DisneyInfinity3.exe`.
-   * **`Insert`**: Toggle developer debug overlay and log console.
-   * **`F4`**: Hot-reload all active mods.
-   * **`F5`**: Toggle in-game mod menu (optional, requires **[CrabeMenu](https://github.com/LucasLhomme/CrabeMenu)**).
-
----
-
-## Building from Source
-
-### Prerequisites
-* CMake ≥ 3.21
-* Visual Studio 2022 (MSVC with C++23 support)
-* Target Architecture: **Win32 (x86)**
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DCRABELOADER_AS_SHARED=ON
-cmake --build build --config Release
+```ini
+[Display]
+Mode=borderless
+FrameLimit=120
+VSync=auto
 ```
 
-The compiled binary will be generated at `build/Release/bink2w32.dll`. Add `-DCRABELOADER_BUILD_INSTALLER=ON` to also build `build/Release/CrabeInstaller.exe` with that DLL embedded.
+- `Mode`: `borderless`, `windowed` or `fullscreen`.
+- `FrameLimit`: `15`–`1000`, or `0` for uncapped FPS.
+- `VSync`: `auto`, `on` or `off`.
 
-## Contributing
+Restart the game after changing settings. See the [full configuration guide](di1/README.md) for other options.
 
-Contributions are welcome! Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** for detailed guidelines on our architecture invariants, C++23 standards, Git workflow, and submission checklist.
+## Compatibility
 
----
+LiteralCrab currently supports the verified Disney Infinity 1.0 Gold Edition PC executable. Unsupported game builds are rejected. Not all gameplay scenarios or display setups have been tested.
+
+## Build from source
+
+Requires Visual Studio 2022 with C++ tools, the Windows SDK and CMake 3.21+.
+
+```powershell
+cmake -S . -B build-di1 -G 'Visual Studio 17 2022' -A Win32
+cmake --build build-di1 --config Release --parallel
+```
+
+Output: `build-di1/Release/LiteralCrab.asi`.
+
+## Credits
+
+**[Lucas Lhomme (@LucasLhomme)](https://github.com/LucasLhomme)** — creator of [CrabeLoader](https://github.com/LucasLhomme/CrabeLoader), the original project this repository is forked from.
+
+LiteralCrab is based on CrabeLoader's `dev` branch (commit [`7f251e8`](https://github.com/LucasLhomme/CrabeLoader/commit/7f251e8eec5de534a2ed9b8efa0694f259706f0f)) and adapts its display features for Disney Infinity 1.0. The original README is available [here](di1/UPSTREAM-README.md).
 
 ## License
 
-CrabeLoader is distributed under the terms of the **[GNU General Public License v3.0](LICENSE)**.
+Licensed under [GPL-3.0](LICENSE). See [third-party notices](di1/NOTICE.txt) for additional credits and licenses.
