@@ -31,6 +31,14 @@ struct LuaApi {
     // The engine's base, table, string and math library functions. Patches receive the ones on
     // the runtime's allowlist even in Lua states the game opened without any library.
     std::vector<LibraryFunction> library;
+    // Validated engine capabilities, visible to patches as LiteralCrab.<name>; patches test them
+    // with LiteralCrab.has(name). Supplied by the engine profile, empty when none verified.
+    std::vector<LibraryFunction> adapters;
+    // Used by adapters to read arguments and return results.
+    double(__cdecl* toNumber)(lua_State*, int){};
+    int(__cdecl* toBoolean)(lua_State*, int){};
+    void(__cdecl* pushBoolean)(lua_State*, int){};
+    int(__cdecl* type)(lua_State*, int){};
 };
 using LogFunction = void (*)(const char* format, ...);
 

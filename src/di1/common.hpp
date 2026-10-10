@@ -2,6 +2,7 @@
 #pragma once
 #include <windows.h>
 #include <cstddef>
+#include <cstdint>
 #include "di1/policy.hpp"
 
 namespace crabe::di1 {
@@ -29,4 +30,9 @@ const wchar_t* pluginDirectory() noexcept;
 void saveMode(Mode mode);
 void log(const char* format, ...);
 bool readable(const void* address, std::size_t length) noexcept;
+// Code signature check: space-separated hex bytes, "??" for bytes that differ per load (the
+// game is relocated, so absolute addresses inside instructions are wildcarded).
+bool codeMatches(std::uintptr_t address, const char* pattern) noexcept;
+// True when the instruction at base+site is a relative call to base+target.
+bool callsTo(std::uintptr_t base, std::uint32_t site, std::uint32_t target) noexcept;
 }

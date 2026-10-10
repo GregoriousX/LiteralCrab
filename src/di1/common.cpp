@@ -2,6 +2,7 @@
 #include "di1/common.hpp"
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cwchar>
 #include <cstring>
 #include <string>
@@ -81,6 +82,26 @@ void log(const char* format, ...) {
     AcquireSRWLockExclusive(&logLock);
     WriteFile(logFile, buffer, static_cast<DWORD>(strlen(buffer)), &written, nullptr);
     ReleaseSRWLockExclusive(&logLock);
+}
+bool codeMatches(std::uintptr_t address, const char* pattern) noexcept {
+    for (std::size_t offset = 0;; ++offset) {
+        while (*pattern == ' ') ++pattern;
+        if (!*pattern) return true;
+        if (!readable(reinterpret_cast<const void*>(address + offset), 1)) return false;
+        if (pattern[0] == '?' && pattern[1] == '?') {
+            pattern += 2;
+            continue;
+        }
+        char* next{};
+        const auto byte = std::strtoul(pattern, &next, 16);
+        if (next == pattern || byte > 0xFF || *reinterpret_cast<const unsigned char*>(address + offset) != byte) return false;
+        pattern = next;
+    }
+}
+bool callsTo(std::uintptr_t base, std::uint32_t site, std::uint32_t target) noexcept {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(base + site);
+    return readable(bytes, 5) && bytes[0] == 0xE8 &&
+        base + site + 5 + *reinterpret_cast<const std::int32_t*>(bytes + 1) == base + target;
 }
 bool readable(const void* address, std::size_t length) noexcept {
     auto cursor = reinterpret_cast<std::uintptr_t>(address);

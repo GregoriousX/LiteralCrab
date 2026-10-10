@@ -2,6 +2,7 @@
 // DI1 profile for the script mod loader: the measured Lua 5.1 C API of the supported build.
 // Another game needs only its own table of addresses and signatures; src/mods is shared.
 #include "di1/mods.hpp"
+#include "di1/adapters.hpp"
 #include "di1/asset_loader.hpp"
 #include "di1/common.hpp"
 #include "minhook/MinHook.h"
@@ -31,6 +32,13 @@ namespace {
         {0x646A0, "56 57 8B 7C 24 0C 8B 47 10 8B 48 44 3B 48 40", 0x73A93},          // lua_pushcclosure
         {0x64D20, "8B 4C 24 10 83 EC 08 56 8B 74 24 10 85 C9 75 04", 0x73584},       // lua_pcall
         {0x64360, "56 8B 74 24 08 57 8B 7C 24 10 8B CF 8B D6", 0x72ABE},             // lua_tolstring
+    };
+    // Used by adapters only; confirmed through their calls in luaB_tonumber, assert, rawequal, type.
+    constexpr Function adapterLuaFunctions[] = {
+        {0x642B0, "8B 4C 24 08 8B 54 24 04 83 EC 08 E8 B0 F9 FF FF", 0x72B7B},       // lua_tonumber
+        {0x64330, "8B 4C 24 08 8B 54 24 04 E8 33 F9 FF FF 8B 48 04", 0x733B0},       // lua_toboolean
+        {0x64720, "8B 44 24 04 8B 48 08 33 D2 39 54 24 08 C7 41 04", 0x72F51},       // lua_pushboolean
+        {0x64090, "8B 4C 24 08 8B 54 24 04 E8 D3 FB FF FF 3D", 0x730C0},             // lua_type
     };
 
     // luaL_Reg arrays of the statically linked standard library: {name, function} pairs ending in
@@ -67,23 +75,6 @@ namespace {
         return true;
     }
 
-    bool matches(std::uintptr_t address, const char* hex) {
-        for (std::size_t offset = 0;; ++offset) {
-            while (*hex == ' ') ++hex;
-            if (!*hex) return true;
-            char* next{};
-            const auto byte = std::strtoul(hex, &next, 16);
-            if (next == hex || byte > 0xFF || !readable(reinterpret_cast<const void*>(address + offset), 1) ||
-                *reinterpret_cast<const unsigned char*>(address + offset) != byte) return false;
-            hex = next;
-        }
-    }
-
-    bool calls(std::uintptr_t base, std::uint32_t site, std::uint32_t target) {
-        const auto* bytes = reinterpret_cast<const unsigned char*>(base + site);
-        return readable(bytes, 5) && bytes[0] == 0xE8 &&
-            base + site + 5 + *reinterpret_cast<const std::int32_t*>(bytes + 1) == base + target;
-    }
 
     template <class T> void bind(T& slot, std::uintptr_t address) { slot = reinterpret_cast<T>(address); }
 
@@ -132,7 +123,7 @@ bool installMods(HMODULE host) {
         }
         const auto base = reinterpret_cast<std::uintptr_t>(host);
         for (const auto& function : luaFunctions)
-            if (!matches(base + function.rva, function.prologue) || !calls(base, function.callSite, function.rva)) {
+            if (!codeMatches(base + function.rva, function.prologue) || !callsTo(base, function.callSite, function.rva)) {
                 log("Mods: Lua API signature differs at RVA 0x%X; mod loader not installed.", function.rva);
                 return false;
             }
@@ -144,6 +135,18 @@ bool installMods(HMODULE host) {
         bind(api.pushClosure, base + luaFunctions[5].rva);
         bind(api.pcall, base + luaFunctions[6].rva);
         bind(api.toLString, base + luaFunctions[7].rva);
+        bool adapterLua = true;
+        for (const auto& function : adapterLuaFunctions)
+            adapterLua = adapterLua && codeMatches(base + function.rva, function.prologue) && callsTo(base, function.callSite, function.rva);
+        if (adapterLua) {
+            bind(api.toNumber, base + adapterLuaFunctions[0].rva);
+            bind(api.toBoolean, base + adapterLuaFunctions[1].rva);
+            bind(api.pushBoolean, base + adapterLuaFunctions[2].rva);
+            bind(api.type, base + adapterLuaFunctions[3].rva);
+            api.adapters = resolveAdapters(host, api);
+        } else {
+            log("Mods: Lua value functions differ; no LiteralCrab adapters.");
+        }
         for (const auto& library : libraries)
             if (!readLibrary(base, library, api.library)) {
                 log("Mods: Lua %slibrary table differs at RVA 0x%X; mod loader not installed.", library.prefix, library.rva);

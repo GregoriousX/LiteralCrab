@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <iterator>
 #include <string>
@@ -131,7 +132,7 @@ bool configure(const LuaApi& resolved, Index loaded, LogFunction logger, bool tr
     // Generated once: collects the allowlisted functions in order, then builds lib from them.
     prelude = "local functions, count = {}, 0\n"
         "return function(f) count = count + 1; functions[count] = f end, function()\n"
-        "local lib = {table = {}, string = {}, math = {}}\n";
+        "local lib = {table = {}, string = {}, math = {}, LiteralCrab = {}}\n";
     functions.clear();
     std::vector<std::string_view> names;
     for (const auto& entry : resolved.library) {
@@ -140,6 +141,16 @@ bool configure(const LuaApi& resolved, Index loaded, LogFunction logger, bool tr
         names.push_back(entry.name);
         functions.push_back(entry.function);
         prelude += "lib." + entry.name + " = functions[" + std::to_string(functions.size()) + "]\n";
+    }
+    // Adapters: identifiers only, so the generated assignment is always well-formed.
+    std::vector<std::string_view> adapters;
+    for (const auto& entry : resolved.adapters) {
+        const bool identifier = !entry.name.empty() && entry.name != "has" && !std::isdigit(static_cast<unsigned char>(entry.name[0])) &&
+            std::all_of(entry.name.begin(), entry.name.end(), [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; });
+        if (!entry.function || !identifier || std::find(adapters.begin(), adapters.end(), entry.name) != adapters.end()) continue;
+        adapters.push_back(entry.name);
+        functions.push_back(entry.function);
+        prelude += "lib.LiteralCrab." + entry.name + " = functions[" + std::to_string(functions.size()) + "]\n";
     }
     for (const auto name : needed)
         if (std::find(names.begin(), names.end(), name) == names.end()) {
@@ -153,6 +164,8 @@ bool configure(const LuaApi& resolved, Index loaded, LogFunction logger, bool tr
         "lib.ipairs = function(t) return iterate, t, 0 end\n"
         "lib.math.pi = 3.141592653589793\n"
         "lib.math.huge = 1 / 0\n"
+        "local adapters = lib.LiteralCrab\n"
+        "adapters.has = function(name) return name ~= 'has' and rawget(adapters, name) ~= nil end\n"
         "return lib\nend\n";
     api = resolved;
     index = std::move(loaded);

@@ -32,6 +32,14 @@ static void capture(const char* format, ...) {
     logText += '\n';
 }
 
+// A stand-in engine adapter: Award(player, name[, force]) -> player == 2 and force.
+static int __cdecl award(lua_State* state) {
+    const bool ok = lua_type(state, 1) == LUA_TNUMBER && lua_tonumber(state, 1) == 2 &&
+        lua_type(state, 2) == LUA_TSTRING && lua_toboolean(state, 3);
+    lua_pushboolean(state, ok);
+    return 1;
+}
+
 static void write(const fs::path& file, std::string_view text) {
     fs::create_directories(file.parent_path());
     std::ofstream(file, std::ios::binary).write(text.data(), static_cast<std::streamsize>(text.size()));
@@ -75,7 +83,12 @@ int main() {
         "[Patch]\nscripts/menu.lua=menu.lua\nscripts/menu.lua=menu_second.lua\nscripts/env.lua=env.lua\n"
         "scripts/fails.lua=fails.lua\nscripts/syntax.lua=syntax.lua\nscripts/multi.lua=noop.lua\n"
         "scripts/error.lua=noop.lua\nscripts/compiled.lua=compiled.lua\nreplaced.lua=after_replace.lua\n"
-        "contains:UNNAMED_MARKER=unnamed.lua\nscripts/data.lua=data.lua\n");
+        "contains:UNNAMED_MARKER=unnamed.lua\nscripts/data.lua=data.lua\nscripts/adapter.lua=adapter.lua\n");
+    write(root / "demo/adapter.lua",
+        "local _, _, log = ...\n"
+        "log(string.format('adapter %s %s %s %s', tostring(LiteralCrab.has('Award')), tostring(LiteralCrab.has('Missing')),\n"
+        "    tostring(LiteralCrab.has('has')), tostring(LiteralCrab.Award(2, 'ITEM_X', true))))\n"
+        "AdapterResult = LiteralCrab.Award(0, 'bad')");
     write(root / "demo/data.lua",
         "local _, options, log = ...\n"
         "local keys = {}\nfor key in pairs(Data) do if type(key) == 'string' and key ~= 'list' then table.insert(keys, key) end end\n"
@@ -109,6 +122,12 @@ int main() {
     api.pushClosure = &lua_pushcclosure;
     api.pcall = &lua_pcall;
     api.toLString = &lua_tolstring;
+    api.toNumber = &lua_tonumber;
+    api.toBoolean = &lua_toboolean;
+    api.pushBoolean = &lua_pushboolean;
+    api.type = &lua_type;
+    // Invalid adapter names are never exposed.
+    api.adapters = {{"Award", &award}, {"has", &award}, {"1bad", &award}, {"bad name", &award}};
 
     lua_State* state = luaL_newstate();
     luaL_openlibs(state);
@@ -216,6 +235,17 @@ int main() {
     // The game loads data tables into states without any library; patches still get lib.
     {
         lua_State* bare = luaL_newstate();
+        // Adapters are reachable from every patch, even in a state without any library, and
+        // nothing is added to the game's globals.
+        CHECK(run(bare, "AdapterResult = nil", "@scripts/adapter.lua") == 0);
+        lua_settop(bare, 0);
+        CHECK(logText.find("adapter.lua: adapter true false false true") != std::string::npos);
+        lua_getglobal(bare, "AdapterResult");
+        CHECK(lua_isboolean(bare, -1) && !lua_toboolean(bare, -1));
+        lua_settop(bare, 0);
+        lua_getglobal(bare, "LiteralCrab");
+        CHECK(lua_isnil(bare, -1));
+        lua_settop(bare, 0);
         CHECK(run(bare, "Data = {b = 2, a = 1, list = {3, 1, 2}}", "@scripts/data.lua") == 0);
         lua_settop(bare, 0);
         CHECK(logText.find("data.lua: keys a,b; sorted 1 2 3; floor 2; no io") != std::string::npos);

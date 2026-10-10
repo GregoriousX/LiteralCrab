@@ -32,22 +32,6 @@ namespace {
     std::atomic<unsigned> traced{};
     std::atomic<unsigned> served{};
 
-    bool matches(std::uintptr_t address, const char* hex) {
-        for (std::size_t offset = 0;; ++offset) {
-            while (*hex == ' ') ++hex;
-            if (!*hex) return true;
-            char* next{};
-            const auto byte = std::strtoul(hex, &next, 16);
-            if (next == hex || !readable(reinterpret_cast<const void*>(address + offset), 1) ||
-                *reinterpret_cast<const unsigned char*>(address + offset) != byte) return false;
-            hex = next;
-        }
-    }
-    bool calls(std::uintptr_t base, std::uint32_t site, std::uint32_t target) {
-        const auto* bytes = reinterpret_cast<const unsigned char*>(base + site);
-        return readable(bytes, 5) && bytes[0] == 0xE8 &&
-            base + site + 5 + *reinterpret_cast<const std::int32_t*>(bytes + 1) == base + target;
-    }
 
     void note(const char* kind, const char* name, bool replaced) {
         if (!trace || traced.fetch_add(1, std::memory_order_relaxed) >= maxTraceLines) return;
@@ -122,11 +106,11 @@ namespace {
 
 bool installAssetLoader(HMODULE host, AssetProvider assets, bool traceRequests) {
     const auto base = reinterpret_cast<std::uintptr_t>(host);
-    if (!matches(base + loadRva, "8B 44 24 04 81 EC 84 00 00 00 57 50 8D 4C 24 0C 68 80 00 00 00 51 E8 85 F5 FF FF") ||
-        !matches(base + loadAndAllocRva, "8B 44 24 04 81 EC 84 00 00 00 56 50 8D 4C 24 0C 68 80 00 00 00 51 E8 95 F1 FF FF") ||
-        !matches(base + signalRva, "8B 01 50 FF 15") || !matches(base + allocateRva, "8B 44 24 0C 8B 4C 24 04 85 C0 74 02 89 08") ||
-        !calls(base, 0x1E28F, signalRva) || !calls(base, 0x1E69C, signalRva) || !calls(base, 0x1E662, allocateRva) ||
-        !calls(base, 0x1EC86, loadAndAllocRva) || !calls(base, 0x1EBD0, loadRva)) {
+    if (!codeMatches(base + loadRva, "8B 44 24 04 81 EC 84 00 00 00 57 50 8D 4C 24 0C 68 80 00 00 00 51 E8 85 F5 FF FF") ||
+        !codeMatches(base + loadAndAllocRva, "8B 44 24 04 81 EC 84 00 00 00 56 50 8D 4C 24 0C 68 80 00 00 00 51 E8 95 F1 FF FF") ||
+        !codeMatches(base + signalRva, "8B 01 50 FF 15") || !codeMatches(base + allocateRva, "8B 44 24 0C 8B 4C 24 04 85 C0 74 02 89 08") ||
+        !callsTo(base, 0x1E28F, signalRva) || !callsTo(base, 0x1E69C, signalRva) || !callsTo(base, 0x1E662, allocateRva) ||
+        !callsTo(base, 0x1EC86, loadAndAllocRva) || !callsTo(base, 0x1EBD0, loadRva)) {
         log("Mods: file loader signature differs; files inside archives cannot be replaced.");
         return false;
     }
