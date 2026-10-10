@@ -5,11 +5,19 @@
 #pragma once
 #include "mods/mod_index.hpp"
 #include <cstddef>
+#include <string>
+#include <vector>
 
 struct lua_State;
 
 namespace crabe::mods {
 using LuaCFunction = int(__cdecl*)(lua_State*);
+// A C function of the engine's Lua standard library, named as Lua sees it: "pcall",
+// "table.insert", "string.format", "math.floor".
+struct LibraryFunction {
+    std::string name;
+    LuaCFunction function{};
+};
 struct LuaApi {
     // Must reach the original, unhooked luaL_loadbuffer.
     int(__cdecl* loadBuffer)(lua_State*, const char*, std::size_t, const char*){};
@@ -20,12 +28,16 @@ struct LuaApi {
     void(__cdecl* pushClosure)(lua_State*, LuaCFunction, int){};
     int(__cdecl* pcall)(lua_State*, int, int, int){};
     const char*(__cdecl* toLString)(lua_State*, int, std::size_t*){};
+    // The engine's base, table, string and math library functions. Patches receive the ones on
+    // the runtime's allowlist even in Lua states the game opened without any library.
+    std::vector<LibraryFunction> library;
 };
 using LogFunction = void (*)(const char* format, ...);
 
 // Call once, before the hook routing to loadBuffer() is enabled. The index is never modified
-// afterwards, which keeps the hook lock-free.
-void configure(const LuaApi& api, Index index, LogFunction log, bool trace);
+// afterwards, which keeps the hook lock-free. Fails if the library lacks a function the patch
+// wrapper needs.
+bool configure(const LuaApi& api, Index index, LogFunction log, bool trace);
 // Drop-in luaL_loadbuffer replacement: applies overrides before and patches after compilation.
 int __cdecl loadBuffer(lua_State* state, const char* data, std::size_t size, const char* name);
 }

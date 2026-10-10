@@ -12,8 +12,11 @@
 namespace crabe::mods {
 // Longest chunk identity considered for matching; longer names never match.
 constexpr std::size_t maxChunkName = 260;
-// Distinct configured paths that may name one chunk ("adventures.lua", "presentation/adventures.lua").
+// Distinct configured targets that may match one chunk ("adventures.lua",
+// "presentation/adventures.lua", or several content markers of an unnamed chunk).
 constexpr std::size_t maxMatches = 8;
+// Shortest content marker accepted for "contains:" targets.
+constexpr std::size_t minMarker = 8;
 
 struct Script {
     std::string chunk;   // "@mods/<folder>/<file>" so Lua errors name the mod file.
@@ -23,7 +26,8 @@ struct Script {
 };
 
 struct Target {
-    std::string path;                    // Normalized: lowercase, '/' separators, no '@'.
+    std::string path;                    // Normalized name, or the exact marker of a content target.
+    bool content{};                      // Matches unnamed chunks whose source contains path.
     std::size_t basename{};              // Offset of the component after the last '/'.
     int override = -1;                   // Index into Index::scripts, -1 = game chunk kept.
     std::vector<std::uint16_t> patches;  // Indices into Index::scripts, in mod load order.
@@ -40,14 +44,16 @@ public:
     // Reads every enabled mods\<folder>\mod.ini (folders in ordinal order). Invalid mods are
     // skipped as a whole and described in messages; valid ones are unaffected.
     static Index load(const std::wstring& modsRoot, std::vector<std::string>& messages);
-    bool empty() const noexcept { return targets.empty(); }
-    // Hot path: no allocation. identity is a chunk name as the engine reports it. Writes every
-    // target whose path is a '/'-bounded suffix of it, longest path first; returns the count.
-    std::size_t find(std::string_view identity, const Target* (&out)[maxMatches]) const noexcept;
+    bool empty() const noexcept { return targets.empty() && contents.empty(); }
+    // Hot path: no allocation. identity is the chunk name as the engine reports it. A named chunk
+    // matches every target whose path is a '/'-bounded suffix of it, longest path first. A chunk
+    // without a name is searched for content markers instead, in load order. Returns the count.
+    std::size_t find(std::string_view identity, std::string_view chunk, const Target* (&out)[maxMatches]) const noexcept;
 
     std::vector<Mod> mods;
     std::vector<Script> scripts;
-    std::vector<Target> targets;  // Sorted by basename, then longest path first.
+    std::vector<Target> targets;   // Named targets, sorted by basename, then longest path first.
+    std::vector<Target> contents;  // Content targets in load order.
 };
 
 // The name a chunk is known by: the source name embedded in a Lua 5.1 binary chunk header when

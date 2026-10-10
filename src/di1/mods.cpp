@@ -30,6 +30,40 @@ namespace {
         {0x64360, "56 8B 74 24 08 57 8B 7C 24 10 8B CF 8B D6", 0x72ABE},             // lua_tolstring
     };
 
+    // luaL_Reg arrays of the statically linked standard library: {name, function} pairs ending in
+    // {NULL, NULL}. Patches get allowlisted entries even in states opened without the library.
+    struct Library {
+        std::uint32_t rva;
+        const char* prefix;
+        std::size_t count;
+    };
+    constexpr Library libraries[] = {
+        {0xE99778, "", 26},         // base (includes the engine's own dumpobject entries)
+        {0xE99158, "table.", 9},
+        {0xE98A50, "string.", 15},
+        {0xE988A0, "math.", 28},
+    };
+    constexpr std::uint32_t codeStart = 0x1000, codeEnd = 0x1000 + 0xE52E4A;
+    constexpr std::uint32_t imageSize = 0x1511000;
+
+    bool readLibrary(std::uintptr_t base, const Library& library, std::vector<mods::LibraryFunction>& out) {
+        struct Entry { const char* name; mods::LuaCFunction function; };
+        const auto* entries = reinterpret_cast<const Entry*>(base + library.rva);
+        if (!readable(entries, sizeof(Entry) * (library.count + 1)) ||
+            entries[library.count].name || entries[library.count].function) return false;
+        for (std::size_t index = 0; index < library.count; ++index) {
+            const auto name = reinterpret_cast<std::uintptr_t>(entries[index].name);
+            const auto function = reinterpret_cast<std::uintptr_t>(entries[index].function);
+            if (name < base || name >= base + imageSize - 32 || !readable(entries[index].name, 32) ||
+                function < base + codeStart || function >= base + codeEnd) return false;
+            std::size_t length = 0;
+            while (length < 32 && entries[index].name[length] > ' ' && entries[index].name[length] < 127) ++length;
+            if (!length || length == 32 || entries[index].name[length]) return false;
+            out.push_back({std::string(library.prefix) + std::string(entries[index].name, length), entries[index].function});
+        }
+        return true;
+    }
+
     bool matches(std::uintptr_t address, const char* hex) {
         for (std::size_t offset = 0;; ++offset) {
             while (*hex == ' ') ++hex;
@@ -80,6 +114,11 @@ bool installMods(HMODULE host) {
         bind(api.pushClosure, base + luaFunctions[5].rva);
         bind(api.pcall, base + luaFunctions[6].rva);
         bind(api.toLString, base + luaFunctions[7].rva);
+        for (const auto& library : libraries)
+            if (!readLibrary(base, library, api.library)) {
+                log("Mods: Lua %slibrary table differs at RVA 0x%X; mod loader not installed.", library.prefix, library.rva);
+                return false;
+            }
         auto* target = reinterpret_cast<void*>(base + loadBufferRva);
         void* original{};
         if (const auto status = MH_CreateHook(target, reinterpret_cast<void*>(&mods::loadBuffer), &original); status != MH_OK) {
@@ -87,8 +126,11 @@ bool installMods(HMODULE host) {
             return false;
         }
         bind(api.loadBuffer, reinterpret_cast<std::uintptr_t>(original));
-        const auto modCount = index.mods.size(), targets = index.targets.size();
-        mods::configure(api, std::move(index), &log, settings.modTrace);
+        const auto modCount = index.mods.size(), targets = index.targets.size() + index.contents.size();
+        if (!mods::configure(api, std::move(index), &log, settings.modTrace)) {
+            MH_RemoveHook(target);
+            return false;
+        }
         if (const auto status = MH_EnableHook(target); status != MH_OK) {
             MH_RemoveHook(target);
             log("Mods: hook refused: %s.", MH_StatusToString(status));

@@ -16,15 +16,22 @@ namespace {
 
     // Wrapper composed around a game chunk after it compiles. Runs the chunk unchanged in the
     // environment the game gives it, then the patch with the chunk's first result; a patch error
-    // is reported and never replaces the chunk's own results or errors.
+    // is reported and never replaces the chunk's own results or errors. lib holds the engine's
+    // own library functions, so patches also work in data-only Lua states without them.
     constexpr std::string_view builderTail = R"lua(
-local getfenv, setfenv, pcall, tostring = getfenv, setfenv, pcall, tostring
-if not (getfenv and setfenv and pcall and tostring) then
-    log(label .. ": skipped, Lua base library unavailable")
-    return original
-end
+local getfenv, setfenv, setmetatable, pcall, tostring =
+      lib.getfenv, lib.setfenv, lib.setmetatable, lib.pcall, lib.tostring
 local function say(message) log(label .. ': ' .. tostring(message)) end
-local function finish(...)
+local function finish(environment, ...)
+    -- Globals resolve in the chunk's environment first, then in lib; writes go to the chunk's.
+    setfenv(patch, setmetatable({}, {
+        __index = function(_, key)
+            local value = environment[key]
+            if value == nil then return lib[key] end
+            return value
+        end,
+        __newindex = environment,
+    }))
     local ok, detail = pcall(patch, (...), options, say)
     if not ok then say('FAILED: ' .. tostring(detail)) end
     return ...
@@ -32,8 +39,7 @@ end
 return function(...)
     local environment = getfenv(1)
     setfenv(original, environment)
-    setfenv(patch, environment)
-    return finish(original(...))
+    return finish(environment, original(...))
 end
 )lua";
 
@@ -136,7 +142,14 @@ end
             std::all_of(value.begin(), value.end(), [](wchar_t ch) { return ch >= L'0' && ch <= L'9'; });
     }
 
-    std::string normalizedTarget(const std::wstring& key) {
+    // "contains:<marker>" selects unnamed chunks by their source text; anything else is a name.
+    std::string targetKey(const std::wstring& key, bool& content) {
+        content = key.size() > 9 && !_wcsnicmp(key.c_str(), L"contains:", 9);
+        if (content) {
+            auto marker = utf8(std::wstring_view(key).substr(9));
+            if (marker.size() < minMarker) throw std::runtime_error("content marker shorter than 8 bytes: " + marker);
+            return marker;
+        }
         const auto text = utf8(key);
         char buffer[maxChunkName];
         const auto length = normalize(text, buffer);
@@ -146,6 +159,7 @@ end
 
     struct Pending {
         std::string target;
+        bool content{};
         bool override{};
         Script script;
     };
@@ -192,16 +206,21 @@ std::string_view chunkIdentity(const char* data, std::size_t size, const char* n
     return name ? std::string_view(name) : std::string_view();
 }
 
-std::size_t Index::find(std::string_view identity, const Target* (&out)[maxMatches]) const noexcept {
+std::size_t Index::find(std::string_view identity, std::string_view chunk, const Target* (&out)[maxMatches]) const noexcept {
     char buffer[maxChunkName];
     const auto length = normalize(identity, buffer);
-    if (!length) return 0;
+    std::size_t count = 0;
+    if (!length) {
+        // Unnamed chunks only: named ones never pay for a content scan.
+        for (auto content = contents.begin(); content != contents.end() && count < maxMatches; ++content)
+            if (chunk.find(content->path) != std::string_view::npos) out[count++] = &*content;
+        return count;
+    }
     const std::string_view full(buffer, length);
     const auto slash = full.rfind('/');
     const auto base = slash == std::string_view::npos ? full : full.substr(slash + 1);
     auto first = std::lower_bound(targets.begin(), targets.end(), base,
         [](const Target& target, std::string_view value) { return target.name() < value; });
-    std::size_t count = 0;
     for (; first != targets.end() && first->name() == base && count < maxMatches; ++first) {
         const std::string_view path = first->path;
         if (full.ends_with(path) && (full.size() == path.size() || full[full.size() - path.size() - 1] == '/'))
@@ -259,7 +278,9 @@ Index Index::load(const std::wstring& modsRoot, std::vector<std::string>& messag
             std::vector<Pending> pending;
             for (const bool override : {true, false}) {
                 for (const auto& [target, file] : section(override ? L"Override" : L"Patch", manifest)) {
-                    Pending item{normalizedTarget(target), override, {}};
+                    Pending item{};
+                    item.target = targetKey(target, item.content);
+                    item.override = override;
                     item.script.mod = modIndex;
                     std::wstring chunk = file;
                     std::replace(chunk.begin(), chunk.end(), L'\\', L'/');
@@ -269,7 +290,7 @@ Index Index::load(const std::wstring& modsRoot, std::vector<std::string>& messag
                         item.script.source = std::move(source);
                     } else {
                         item.script.body = std::move(source);
-                        item.script.source = "local original, patch, log = ...\nlocal label = " +
+                        item.script.source = "local original, patch, log, lib = ...\nlocal label = " +
                             luaQuote(folderName + "/" + utf8(chunk)) + "\nlocal options = " + options +
                             std::string(builderTail);
                     }
@@ -281,9 +302,12 @@ Index Index::load(const std::wstring& modsRoot, std::vector<std::string>& messag
             // Commit only after the whole mod validated.
             index.mods.push_back({folderName, utf8(name)});
             for (auto& item : pending) {
-                auto [slot, created] = targetSlots.try_emplace(item.target, index.targets.size());
-                if (created) index.targets.push_back({item.target});
-                auto& target = index.targets[slot->second];
+                auto& list = item.content ? index.contents : index.targets;
+                // Names and markers live in separate namespaces; '\x01' never occurs in either.
+                auto [slot, created] = targetSlots.try_emplace(
+                    item.content ? '\x01' + item.target : item.target, list.size());
+                if (created) list.push_back({item.target, item.content});
+                auto& target = list[slot->second];
                 const auto scriptIndex = static_cast<std::uint16_t>(index.scripts.size());
                 if (item.override && target.override >= 0) {
                     messages.push_back("Mod " + folderName + ": override of " + item.target + " ignored; " +

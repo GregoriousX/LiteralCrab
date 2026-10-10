@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -73,7 +74,16 @@ int main() {
         "[Override]\nscripts/replaced.lua=replaced.lua\nscripts/broken.lua=broken.lua\n"
         "[Patch]\nscripts/menu.lua=menu.lua\nscripts/menu.lua=menu_second.lua\nscripts/env.lua=env.lua\n"
         "scripts/fails.lua=fails.lua\nscripts/syntax.lua=syntax.lua\nscripts/multi.lua=noop.lua\n"
-        "scripts/error.lua=noop.lua\nscripts/compiled.lua=compiled.lua\nreplaced.lua=after_replace.lua\n");
+        "scripts/error.lua=noop.lua\nscripts/compiled.lua=compiled.lua\nreplaced.lua=after_replace.lua\n"
+        "contains:UNNAMED_MARKER=unnamed.lua\nscripts/data.lua=data.lua\n");
+    write(root / "demo/data.lua",
+        "local _, options, log = ...\n"
+        "local keys = {}\nfor key in pairs(Data) do if type(key) == 'string' and key ~= 'list' then table.insert(keys, key) end end\n"
+        "table.sort(keys)\ntable.sort(Data.list)\nlocal sorted = {}\nfor _, value in ipairs(Data.list) do sorted[#sorted + 1] = tostring(value) end\n"
+        "log(string.format('keys %s; sorted %s; floor %d; %s', table.concat(keys, ','), table.concat(sorted, ' '),\n"
+        "    math.floor(2.7), io == nil and dofile == nil and 'no io' or 'io leaked'))\n"
+        "Data.patched = true");
+    write(root / "demo/unnamed.lua", "UnnamedPatched = Marker");
     write(root / "demo/replaced.lua", "Replaced = true\nreturn 'mod'");
     write(root / "demo/broken.lua", "return (");
     write(root / "demo/menu.lua",
@@ -99,10 +109,26 @@ int main() {
     api.pushClosure = &lua_pushcclosure;
     api.pcall = &lua_pcall;
     api.toLString = &lua_tolstring;
-    configure(api, std::move(index), &capture, false);
 
     lua_State* state = luaL_newstate();
     luaL_openlibs(state);
+    // Every C function of the reference libraries, as an engine profile would list them;
+    // configure() keeps only its allowlist.
+    for (const char* library : {"_G", "table", "string", "math"}) {
+        lua_getglobal(state, library);
+        const std::string prefix = std::strcmp(library, "_G") ? std::string(library) + "." : "";
+        for (lua_pushnil(state); lua_next(state, -2); lua_pop(state, 1))
+            if (lua_type(state, -2) == LUA_TSTRING && lua_iscfunction(state, -1))
+                api.library.push_back({prefix + lua_tostring(state, -2), lua_tocfunction(state, -1)});
+        lua_pop(state, 1);
+    }
+    CHECK(api.library.size() > 60);
+    {
+        LuaApi incomplete = api;
+        incomplete.library.clear();
+        CHECK(!configure(incomplete, Index{}, &capture, false));
+    }
+    CHECK(configure(api, std::move(index), &capture, false));
 
     // Untargeted chunks pass through.
     CHECK(run(state, "return 'game'", "@scripts/other.lua") == 0 && resultString(state) == "game");
@@ -179,12 +205,28 @@ int main() {
         CHECK(evaluate(state, "CompiledPatched == 42"));
     }
 
-    // Without the base library the builder refuses and the chunk is untouched.
+    // Unnamed chunks are matched by content; named chunks with the same text are not.
+    CHECK(run(state, "Marker = 'UNNAMED_MARKER'", "") == 0);
+    lua_settop(state, 0);
+    CHECK(evaluate(state, "UnnamedPatched == 'UNNAMED_MARKER'"));
+    CHECK(run(state, "UnnamedPatched = nil Marker = 'UNNAMED_MARKER'", "@scripts/named.lua") == 0);
+    lua_settop(state, 0);
+    CHECK(evaluate(state, "UnnamedPatched == nil"));
+
+    // The game loads data tables into states without any library; patches still get lib.
     {
         lua_State* bare = luaL_newstate();
-        CHECK(run(bare, "return 'bare'", "@scripts/menu.lua") == 0 && resultString(bare) == "bare");
+        CHECK(run(bare, "Data = {b = 2, a = 1, list = {3, 1, 2}}", "@scripts/data.lua") == 0);
         lua_settop(bare, 0);
-        CHECK(logText.find("Lua base library unavailable") != std::string::npos);
+        CHECK(logText.find("data.lua: keys a,b; sorted 1 2 3; floor 2; no io") != std::string::npos);
+        lua_getglobal(bare, "Data");
+        lua_getfield(bare, -1, "patched");
+        CHECK(lua_toboolean(bare, -1));
+        lua_settop(bare, 0);
+        // Globals the patch did not define stay absent from the game's state.
+        lua_getglobal(bare, "pairs");
+        CHECK(lua_isnil(bare, -1));
+        lua_settop(bare, 0);
         lua_close(bare);
     }
 
