@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Points the process's file opens and attribute queries for replaced assets at the mod or cache
-// copy. Hooks kernel32 so sound and video libraries are covered as well as the game itself.
+// Holds the asset index for the lifetime of the process. Points file opens and attribute queries
+// for files replaced on disk at the mod or cache copy (kernel32 hooks, so sound and video
+// libraries are covered too), and serves files the engine's loader requests by name.
 #pragma once
 #include "mods/asset_mods.hpp"
 
 namespace crabe::mods {
 using LogFunction = void (*)(const char* format, ...);
-// Installs the hooks once; the index is never modified afterwards. Returns false and leaves
-// nothing hooked on failure. Requires MinHook to be initialized.
+// Call once; the index is never modified afterwards. File hooks are installed only when the
+// index has redirects. Returns false and leaves nothing hooked on failure. Requires MinHook.
 bool installFileRedirect(AssetIndex index, LogFunction log, bool trace);
+// The engine-loader provider: the mod's data for a request name. Thread-safe.
+bool readAssetMember(const char* name, std::string& data);
 // The replacement for a file name, or null. Exposed for tests.
 const std::wstring* redirectedAsset(const char* fileName) noexcept;
 const std::wstring* redirectedAsset(const wchar_t* fileName) noexcept;

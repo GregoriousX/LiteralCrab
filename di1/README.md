@@ -41,7 +41,7 @@ Trace=0
 | `VSync` | `auto` | `auto` bypasses VSync when uncapped or when the cap is at least the monitor refresh rate; `on` always synchronizes; `off` always bypasses it. |
 | `Diagnostics` | `0` | Troubleshooting only. `1` writes frame-time statistics (average and worst frame, counts above 20/33/50 ms, time blocked in Present) and the game's mouse/focus state to LiteralCrab.log on each focus change and on exit. Nothing is written per frame. |
 | `[Mods]` `Enabled` | `1` | Loads script and asset mods from the `mods` folder beside the ASI. With no mods installed nothing is hooked. `0` leaves every game script and file untouched. See [MODDING.md](MODDING.md). |
-| `[Mods]` `Trace` | `0` | For mod authors. `1` logs the name of every Lua chunk the game compiles, which is the name a mod targets. |
+| `[Mods]` `Trace` | `0` | For mod authors. `1` logs the name of every Lua chunk the game compiles and every file its loader requests, which are the names a mod targets. Slows loading; leave `0` for play. |
 
 ## Frame-rate examples
 

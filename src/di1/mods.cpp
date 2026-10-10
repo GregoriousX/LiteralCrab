@@ -2,6 +2,7 @@
 // DI1 profile for the script mod loader: the measured Lua 5.1 C API of the supported build.
 // Another game needs only its own table of addresses and signatures; src/mods is shared.
 #include "di1/mods.hpp"
+#include "di1/asset_loader.hpp"
 #include "di1/common.hpp"
 #include "minhook/MinHook.h"
 #include "mods/file_redirect.hpp"
@@ -88,21 +89,26 @@ namespace {
 
     void installAssets(HMODULE host, const std::wstring& modsRoot, const std::vector<mods::Mod>& list,
         std::vector<std::string>& messages) {
-        if (list.empty()) return;
+        const bool trace = config().modTrace;
         wchar_t executable[32768]{};
         const auto length = GetModuleFileNameW(host, executable, 32768);
         const wchar_t* slash = length && length < 32768 ? wcsrchr(executable, L'\\') : nullptr;
-        if (!slash) return;
-        const auto gameAssets = std::wstring(executable, static_cast<std::size_t>(slash - executable)) +L"\\assets";
+        if (list.empty() || !slash) {
+            if (trace) installAssetLoader(host, nullptr, true);
+            return;
+        }
+        const auto gameAssets = std::wstring(executable, static_cast<std::size_t>(slash - executable)) + L"\\assets";
         const auto started = GetTickCount64();
         auto assets = mods::AssetIndex::build(gameAssets, modsRoot + L"\\.cache", list, messages);
-        if (assets.empty()) return;
-        const auto count = assets.redirects.size();
-        if (mods::installFileRedirect(std::move(assets), &log, config().modTrace))
-            messages.push_back("Mods: " + std::to_string(count) + " game file(s) replaced; prepared in " +
-                std::to_string(GetTickCount64() - started) + " ms.");
-        else
-            messages.push_back("Mods: asset replacement unavailable; game files untouched.");
+        const auto redirects = assets.redirects.size(), members = assets.members.size();
+        // The index is kept first: the loader hook asks it for files as soon as it is enabled.
+        if (!mods::installFileRedirect(std::move(assets), &log, trace) && redirects)
+            messages.push_back("Mods: files the game opens from disk cannot be replaced; those stay original.");
+        if ((members || trace) && !installAssetLoader(host, members ? &mods::readAssetMember : nullptr, trace) && members)
+            messages.push_back("Mods: files inside the game's archives cannot be replaced on this build.");
+        if (redirects || members)
+            messages.push_back("Mods: " + std::to_string(redirects) + " file(s) replaced on disk, " + std::to_string(members) +
+                " served to the engine's loader; prepared in " + std::to_string(GetTickCount64() - started) + " ms.");
     }
 }
 

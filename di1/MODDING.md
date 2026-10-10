@@ -49,18 +49,17 @@ Players change options and `Enabled` in `user.ini`, using the same sections. A m
 
 ## Asset mods
 
-An asset mod mirrors the game's `assets` folder. Put the files loose in `mods/<mod>/assets/`, or pack that `assets` folder into one or more ordinary `.zip` files placed directly in `mods/<mod>/`. Any common ZIP tool works (Deflate or Store compression; no encryption or ZIP64). There is no need to rebuild the game's own archive format.
+An asset mod mirrors the game's `assets` folder. Put the files loose in `mods/<mod>/assets/`, or pack that `assets` folder into one or more ordinary `.zip` files placed directly in `mods/<mod>/`. Any common ZIP tool works (Deflate or Store compression; no encryption or ZIP64). There is no need to use the game's own archive format.
 
 Each file is placed by its path below `assets`:
 
-- **A file the game keeps on disk** (videos, sound banks, an archive as a whole): the mod's file replaces it. A whole replacement archive may be an ordinary ZIP; it is converted.
-- **A file inside one of the game's archives**: for example, `assets/ui/controllerbuttons.mtb` and `assets/ui/textures/0389b6b276ccc3af.tbody` are members of `assets/ui/ui.zip`. LiteralCrab looks for the member in the archives of the file's folder, then of each parent folder. The first archive containing it gets the mod's version. A file that no archive contains is added to the folder's archive when that folder has exactly one archive; otherwise it is skipped and logged.
+- **Files inside the game's archives** (models, materials, textures, data scripts, shaders): the game's file loader asks for these by name, and LiteralCrab hands it the mod's file instead. The name is the archive's folder plus the file's path inside the archive. For example, `controllerbuttons.mtb` inside `assets/ui/ui.zip` is `assets/ui/controllerbuttons.mtb` in a mod. Textures (`.tbody`) are named after their content hash and are global: `assets/<any folder>/textures/0389b6b276ccc3af.tbody` replaces that texture wherever it is used.
+- **Files the game opens from disk** (videos, sound banks): the mod's file is opened instead. A packaged one is extracted once to `mods/.cache/`.
+- **A whole archive** (for example a complete `assets/ui/ui.zip`, ordinary or from the game): its files are served by name as above, so it is never converted or repacked.
 
-Ship only the files you changed. Unchanged members come from the player's own game files, so a mod never needs to redistribute game content. Mods are combined per file: if two mods change the same file, the first in load order wins and the conflict is logged.
+The game's archives are never rebuilt or copied. Startup only lists the mods' files, and a file is read when the game requests it, so even large mods start quickly and use no extra disk space. Ship only the files you changed; everything else still comes from the player's own game files, so a mod never needs to redistribute game content.
 
-At startup, every archive a mod touches is rebuilt once in the game's layout under `mods/.cache/`. It is rebuilt again only when the game archive or a contributing mod file changes; the log reports how long preparation took. The cache is safe to delete. While the game runs, opening an affected file is redirected to the mod or cache copy. Writes always reach the original path, and all other files are untouched.
-
-The log lists each mod's number of asset files and every file that was skipped, with the reason. With `Trace=1`, every redirected open is logged too.
+Mods are combined per file. If two mods provide the same file, the first in load order wins and the conflict is logged. The log lists each mod's number of asset files and every file that was skipped, with the reason. With `Trace=1`, every file the game's loader requests is logged; files served from a mod are marked `<- mod`. Use this to find the names to replace.
 
 ## Chunk names
 

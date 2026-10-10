@@ -25,7 +25,7 @@ namespace {
     AttributesExWFn attributesExW{};
 
     template <class Char> const std::wstring* lookup(const Char* fileName) noexcept {
-        if (!fileName || index.empty()) return nullptr;
+        if (!fileName || index.redirects.empty()) return nullptr;
         const auto length = std::char_traits<Char>::length(fileName);
         char path[maxAssetPath];
         const auto size = assetPath(std::basic_string_view<Char>(fileName, length), path);
@@ -72,6 +72,12 @@ namespace {
 }
 
 const std::wstring* redirectedAsset(const char* fileName) noexcept { return lookup(fileName); }
+bool readAssetMember(const char* name, std::string& data) {
+    char key[maxAssetPath];
+    const auto length = name ? requestName(name, key) : 0;
+    const auto* member = length ? index.member(std::string_view(key, length)) : nullptr;
+    return member && index.read(*member, data);
+}
 const std::wstring* redirectedAsset(const wchar_t* fileName) noexcept { return lookup(fileName); }
 void setAssetIndexForTest(AssetIndex loaded) { index = std::move(loaded); }
 
@@ -79,6 +85,7 @@ bool installFileRedirect(AssetIndex loaded, LogFunction logger, bool traceFiles)
     index = std::move(loaded);
     log = logger;
     trace = traceFiles;
+    if (index.redirects.empty()) return true;
     const HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
     struct Hook {
         const char* name;
@@ -107,7 +114,7 @@ bool installFileRedirect(AssetIndex loaded, LogFunction logger, bool traceFiles)
     }
     if (!ok) {
         for (const auto target : targets) if (target) { MH_DisableHook(target); MH_RemoveHook(target); }
-        index = {};
+        index.redirects.clear();  // Members are served without file hooks.
     }
     return ok;
 }
