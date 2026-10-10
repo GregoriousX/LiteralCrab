@@ -1,18 +1,14 @@
 name: Release - Build & Publish
 
-# A release is prepared when the VERSION file reaches main with a number that has
-# no published release yet. It is created as a DRAFT (and flagged pre-release): only
-# maintainers can see it, and nobody is asked to update, until a maintainer publishes
-# it by hand on GitHub. While it stays a draft, every merge into main rebuilds it, so
-# it always matches main; once published it is frozen and later merges leave it alone.
+# VERSION reaching main prepares an unpublished draft/pre-release.
+# Published versions (both legacy bare tags and v-prefixed tags) are frozen.
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
@@ -26,11 +22,8 @@ jobs:
       release: ${{ steps.decide.outputs.release }}
       version: ${{ steps.decide.outputs.version }}
       tag: ${{ steps.decide.outputs.tag }}
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Read VERSION and look for an existing release
         id: decide
         shell: bash
@@ -38,141 +31,72 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "::notice::Releases are only cut from main; this run is on ${GITHUB_REF_NAME}."
+            echo "::notice::Releases are only prepared from main."
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           VER=$(tr -d '[:space:]' < VERSION)
           if [[ ! "${VER}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::VERSION must look like 1.2.3, found '${VER}'. A suffix would hide the release from the update check."
+            echo "::error::VERSION must look like 1.2.3, found '${VER}'."
             exit 1
           fi
           TAG="v${VER}"
-
-          AUTH=()
-          if [[ -n "${GH_TOKEN}" ]]; then AUTH=(-H "Authorization: Bearer ${GH_TOKEN}"); fi
           LIST=$(mktemp)
-          STATUS=$(curl -s -o "${LIST}" -w '%{http_code}' "${AUTH[@]}" \
+          STATUS=$(curl -sS -o "${LIST}" -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100")
           if [[ "${STATUS}" != "200" ]]; then
-            echo "::error::Could not list the existing releases (HTTP ${STATUS})."
+            echo "::error::Could not list existing releases (HTTP ${STATUS})."
             exit 1
           fi
-
-          PUBLISHED=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1],encoding="utf-8")); print(any(x["tag_name"]==sys.argv[2] and not x["draft"] for x in r))' "${LIST}" "${TAG}")
+          PUBLISHED=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1],encoding="utf-8")); print(any(x["tag_name"] in (sys.argv[2],sys.argv[3]) and not x["draft"] for x in r))' "${LIST}" "${TAG}" "${VER}")
           if [[ "${PUBLISHED}" == "True" ]]; then
-            echo "::notice::${TAG} is already published. Bump the VERSION file to release a new version."
+            echo "::notice::Version ${VER} is already published; leaving its release, tags and assets untouched."
             echo "release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Preparing the draft release for CrabeLoader ${VER} (tag ${TAG})."
+            echo "Preparing the LiteralCrab ${VER} draft (tag ${TAG})."
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
   build-and-release:
-    name: Build & Release CrabeLoader
+    name: Build & Release LiteralCrab
     needs: plan
     if: needs.plan.outputs.release == 'true'
-    runs-on: windows-latest
-
+    runs-on: windows-2022
+    permissions:
+      contents: write
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Configure CMake
-        run: |
-          cmake -B build -S . -A Win32 -DCRABELOADER_AS_SHARED=ON -DCRABELOADER_BUILD_INSTALLER=ON -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build CrabeLoader and CrabeInstaller (Release)
-        run: |
-          cmake --build build --config Release
-
-      - name: Run tests
-        run: |
-          .\build\Release\test_update_checker.exe
-          .\build\Release\test_installer.exe
-          .\build\Release\crabe_fate.exe
-
-      - name: Package Release
-        shell: bash
-        run: |
-          mkdir -p package/mods
-
-          # Find and copy the proxy DLL
-          if [ -f build/Release/bink2w32.dll ]; then
-            cp build/Release/bink2w32.dll package/
-          elif [ -f build/bink2w32.dll ]; then
-            cp build/bink2w32.dll package/
-          else
-            echo "Error: bink2w32.dll not found in build output."
-            exit 1
-          fi
-
-          if [ ! -f build/Release/CrabeInstaller.exe ]; then
-            echo "Error: CrabeInstaller.exe not found in build output."
-            exit 1
-          fi
-          cp build/Release/CrabeInstaller.exe package/
-
-          # Copy mod template and EmmyLua documentation
-          cp -r mods/_template package/mods/
-          mkdir -p package/docs
-          cp docs/crabe_api.def.lua package/docs/
-
-          # Quickstart README for players and modders
-          cat << 'ENDREADME' > package/README.txt
-          CrabeLoader for Disney Infinity 3.0 (Gold Edition)
-          ==================================================
-
-          Installation (easiest): run CrabeInstaller.exe and follow the prompts.
-          It finds the game, keeps your original bink2w32.dll as bink2w32_orig.dll,
-          and creates the 'mods/' folder. Running it again updates CrabeLoader.
-
-          Installation (manual):
-          1. Rename the game's bink2w32.dll to bink2w32_orig.dll (next to DisneyInfinity3.exe).
-          2. Place this bink2w32.dll in the same directory.
-          3. Place your mods into the 'mods/' subfolder.
-
-          In-game: press Insert for the CrabeLoader overlay. F5 opens the mod menu if CrabeMenu is installed.
-
-          Updates: at launch CrabeLoader checks GitHub for a newer release and asks before opening
-          anything. To disable it, set 'check = false' under [updates] in Crabe/crabe.toml.
-
-          Mod Development:
-          - Mod template is provided under 'mods/_template/' with mod.json.
-          - Full VS Code autocompletion definitions are in 'docs/crabe_api.def.lua'.
-          ENDREADME
-
-          # Compress package into zip
-          ZIP_NAME="CrabeLoader-${{ needs.plan.outputs.tag }}.zip"
-          cd package && 7z a "../${ZIP_NAME}" * && cd ..
-
-      - name: Stage release assets and checksums
-        shell: bash
-        run: |
-          cp package/bink2w32.dll bink2w32.dll
-          cp package/CrabeInstaller.exe CrabeInstaller.exe
-          sha256sum bink2w32.dll CrabeInstaller.exe "CrabeLoader-${{ needs.plan.outputs.tag }}.zip" > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
+      - uses: actions/checkout@v4
+      - name: Configure Windows x86 ASI
+        run: cmake -S . -B build-di1 -G "Visual Studio 17 2022" -A Win32
+      - name: Build LiteralCrab and DI1 tests
+        run: cmake --build build-di1 --config Release --parallel
+      - name: Run DI1 tests
+        run: ctest --test-dir build-di1 -C Release --output-on-failure
+      - name: Package DI1
+        shell: pwsh
+        run: .\di1\package.ps1 -SourceRevision '${{ github.sha }}'
       - name: Prepare GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: CrabeLoader ${{ needs.plan.outputs.tag }}
+          name: LiteralCrab ${{ needs.plan.outputs.tag }}
           draft: true
           prerelease: true
           generate_release_notes: true
           body: |
-            **Draft, visible to maintainers only.** Test `CrabeInstaller.exe`, then publish. To roll the version out to players, also untick "Set as a pre-release": the in-game update prompt only sees published, stable releases.
+            **Draft, visible to maintainers only.** Test the DI1 ASI before publishing.
+
+            The user ZIP contains only LiteralCrab.asi, LiteralCrab.ini and the unchanged README.md.
+            LICENSE and NOTICE.txt accompany the download separately.
+            Corresponding source for this build: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.zip
           files: |
-            CrabeInstaller.exe
-            bink2w32.dll
-            CrabeLoader-${{ needs.plan.outputs.tag }}.zip
-            SHA256SUMS.txt
+            dist-di1/LiteralCrab-DI1-${{ needs.plan.outputs.version }}-x86.zip
+            dist-di1/LICENSE
+            dist-di1/NOTICE.txt
+            dist-di1/SOURCE.txt
+          fail_on_unmatched_files: true

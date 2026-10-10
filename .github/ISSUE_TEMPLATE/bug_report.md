@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something in CrabeLoader, its installer or a mod load does not work
+about: A display, frame-rate or capture issue in LiteralCrab DI1
 title: ''
 labels: bug
 assignees: ''
@@ -8,29 +8,18 @@ assignees: ''
 
 ## What happened
 
-<!-- What you did, what you expected, and what happened instead. -->
-
-## Steps to reproduce
-
-1.
-2.
-3.
+Describe what you expected and what happened, with steps to reproduce.
 
 ## Your setup
 
-- **CrabeLoader version:** <!-- the first line of loader.log, e.g. "CrabeLoader v0.2.0 initialized" -->
-- **Installed with:** <!-- CrabeInstaller.exe / manually -->
-- **Game:** <!-- Disney Infinity 3.0 Gold Edition, Steam -->
-- **Windows:** <!-- e.g. Windows 11 23H2 -->
-- **Mods loaded:** <!-- the folders under mods/ -->
+- LiteralCrab version or source commit:
+- Disney Infinity 1.0 Gold Edition PC executable version:
+- ASI loader and any other display plugins:
+- Windows version and graphics driver:
+- Display resolution, aspect ratio and refresh rate:
+- LiteralCrab display mode, FrameLimit and VSync settings:
 
 ## Logs
 
-Please attach these files from the game folder (drag them into this box):
-
-- `loader.log`
-- If the game crashed: `Crabe\crash-<date>.txt`
-
-Both are plain text. They no longer contain IP addresses, but they can contain file paths (and so your Windows user name): edit them first if that matters to you.
-
-**Do not attach the `.dmp` file here.** It is a memory snapshot of the game and may hold personal data. Say that you have it, and it can be shared privately if it is needed.
+Attach `LiteralCrab.log` and the relevant settings from `LiteralCrab.ini`.
+You can remove personal file paths from the log before sharing it.

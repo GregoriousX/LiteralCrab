@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Port of upstream EngineResolution, measured against DI1 PC and Wii U symbols.
+// Port of upstream EngineResolution, measured against the supported DI1 PC build.
 #include "di1/engine.hpp"
 #include "di1/common.hpp"
 #include "di1/display.hpp"
