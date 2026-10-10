@@ -27,7 +27,7 @@ set_source_files_properties(src/third_party/puff/puff.c PROPERTIES COMPILE_OPTIO
 # file lookups, hooks) stay in their own files at full speed.
 set_source_files_properties(src/mods/mod_index.cpp src/mods/asset_mods.cpp PROPERTIES COMPILE_OPTIONS /O1)
 set(MINHOOK src/minhook/buffer.c src/minhook/hook.c src/minhook/trampoline.c src/minhook/hde/hde32.c)
-add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} src/di1/engine.cpp src/di1/mods.cpp src/di1/adapters.cpp src/di1/asset_loader.cpp src/di1/camera.cpp src/di1/gui_screens.cpp src/di1/main.cpp di1/exports.def)
+add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} src/di1/engine.cpp src/di1/mods.cpp src/di1/adapters.cpp src/di1/asset_loader.cpp src/di1/camera.cpp src/di1/gui_screens.cpp src/di1/post_effects.cpp src/di1/main.cpp di1/exports.def)
 set_target_properties(LiteralCrab PROPERTIES PREFIX "" SUFFIX ".asi")
 target_include_directories(LiteralCrab PRIVATE include src)
 target_compile_definitions(LiteralCrab PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS LITERALCRAB_VERSION="${PROJECT_VERSION}")

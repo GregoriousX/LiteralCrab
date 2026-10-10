@@ -4,6 +4,7 @@
 #include "di1/display.hpp"
 #include "di1/engine.hpp"
 #include "di1/mods.hpp"
+#include "di1/post_effects.hpp"
 #include "minhook/MinHook.h"
 #include <atomic>
 #include <cwchar>
@@ -59,6 +60,7 @@ namespace {
         crabe::di1::log("READY: DI1 display hooks installed before engine startup.");
         // Optional and independent: only installed when LiteralCrab.ini sets a camera option.
         crabe::di1::installCameraHooks(host, crabe::di1::config());
+        crabe::di1::installPostEffectHooks(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
         crabe::di1::installMods(host);
     }

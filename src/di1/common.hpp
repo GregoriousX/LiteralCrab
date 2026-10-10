@@ -25,6 +25,9 @@ struct Config {
     // Seconds before the camera returns behind the character after the player moves it;
     // negative keeps each camera's own value.
     float cameraReturnDelay = -1.0f;
+    // Post-processing effects the scene settings may enable; false forces them off everywhere.
+    bool motionBlur = true;
+    bool depthOfField = true;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;
