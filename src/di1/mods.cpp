@@ -4,7 +4,9 @@
 #include "di1/mods.hpp"
 #include "di1/common.hpp"
 #include "minhook/MinHook.h"
+#include "mods/file_redirect.hpp"
 #include "mods/lua_mods.hpp"
+#include <cwchar>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -83,6 +85,25 @@ namespace {
     }
 
     template <class T> void bind(T& slot, std::uintptr_t address) { slot = reinterpret_cast<T>(address); }
+
+    void installAssets(HMODULE host, const std::wstring& modsRoot, const std::vector<mods::Mod>& list,
+        std::vector<std::string>& messages) {
+        if (list.empty()) return;
+        wchar_t executable[32768]{};
+        const auto length = GetModuleFileNameW(host, executable, 32768);
+        const wchar_t* slash = length && length < 32768 ? wcsrchr(executable, L'\\') : nullptr;
+        if (!slash) return;
+        const auto gameAssets = std::wstring(executable, static_cast<std::size_t>(slash - executable)) +L"\\assets";
+        const auto started = GetTickCount64();
+        auto assets = mods::AssetIndex::build(gameAssets, modsRoot + L"\\.cache", list, messages);
+        if (assets.empty()) return;
+        const auto count = assets.redirects.size();
+        if (mods::installFileRedirect(std::move(assets), &log, config().modTrace))
+            messages.push_back("Mods: " + std::to_string(count) + " game file(s) replaced; prepared in " +
+                std::to_string(GetTickCount64() - started) + " ms.");
+        else
+            messages.push_back("Mods: asset replacement unavailable; game files untouched.");
+    }
 }
 
 bool installMods(HMODULE host) {
@@ -94,7 +115,10 @@ bool installMods(HMODULE host) {
     if (!*pluginDirectory()) return false;
     try {
         std::vector<std::string> messages;
-        auto index = mods::Index::load(std::wstring(pluginDirectory()) + L"mods", messages);
+        const auto modsRoot = std::wstring(pluginDirectory()) + L"mods";
+        auto index = mods::Index::load(modsRoot, messages);
+        // Assets do not depend on the Lua profile: they only redirect files the game opens.
+        installAssets(host, modsRoot, index.mods, messages);
         for (const auto& message : messages) log("%s", message.c_str());
         if (index.empty()) {
             log("Mods: no script mods to load; game scripts untouched.");

@@ -72,14 +72,14 @@ int main() {
     std::vector<std::string> messages;
     const auto index = Index::load(root, messages);
     for (const auto& message : messages) std::printf("  %s\n", message.c_str());
-    CHECK(index.mods.size() == 3 && index.mods[0].name == "Alpha Mod" && index.mods[1].name == "beta");
+    CHECK(index.mods.size() == 4 && index.mods[0].name == "Alpha Mod" && index.mods[1].name == "beta" && index.mods[2].scripts == 0);
     CHECK(logged(messages, "Mod short skipped: content marker shorter than 8 bytes"));
     CHECK(index.contents.size() == 2);
     CHECK(logged(messages, "Mod disabled: disabled."));
     CHECK(logged(messages, "Mod escape skipped"));
     CHECK(logged(messages, "Mod bytecode skipped"));
     CHECK(logged(messages, "Mod missing skipped"));  // One bad file rejects the whole mod.
-    CHECK(logged(messages, "Mod empty skipped"));
+    CHECK(logged(messages, "Mod empty (Empty): 0 script(s)."));  // May still bring assets.
     CHECK(logged(messages, "override of presentation/adventures.lua ignored; alpha already replaces it"));
     CHECK(index.targets.size() == 3);
 

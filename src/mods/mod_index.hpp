@@ -37,6 +37,8 @@ struct Target {
 struct Mod {
     std::string folder;
     std::string name;
+    std::wstring path;        // The mod's folder; asset mods read their files from it.
+    std::size_t scripts{};    // Overrides and patches; a mod may consist of assets only.
 };
 
 class Index {

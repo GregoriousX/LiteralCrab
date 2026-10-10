@@ -1,6 +1,6 @@
-# LiteralCrab script mods
+# LiteralCrab mods
 
-LiteralCrab can load Lua script mods for Disney Infinity 1.0 Gold Edition. The loader is deliberately small. A mod can replace a game Lua chunk, or patch a chunk after the game has compiled it. LiteralCrab adds only logging, option values and the game's own basic Lua library functions. It exposes no memory access or native hooks, and it does not sandbox scripts: they run with whatever the game's Lua environment provides, so install mods only from authors you trust. LiteralCrab itself ships no mods. Mods are separate downloads, so the display plugin stays stable whether or not mods are installed.
+LiteralCrab can load mods for Disney Infinity 1.0 Gold Edition. The loader is deliberately small. A mod can replace game files (see [Asset mods](#asset-mods)), replace a game Lua chunk, or patch a chunk after the game has compiled it. LiteralCrab adds only logging, option values and the game's own basic Lua library functions. It exposes no memory access or native hooks, and it does not sandbox scripts: they run with whatever the game's Lua environment provides, so install mods only from authors you trust. LiteralCrab itself ships no mods. Mods are separate downloads, so the display plugin stays stable whether or not mods are installed.
 
 Mods are read once at startup. Restart the game after installing, removing or configuring a mod.
 
@@ -15,7 +15,9 @@ mods/
     ├── mod.ini        <- manifest, shipped by the mod
     ├── user.ini       <- optional player settings, never shipped by the mod
     ├── replace/...
-    └── patches/...
+    ├── patches/...
+    ├── assets/...     <- loose replacement files (asset mods)
+    └── *.zip          <- or the same assets/ tree packed in ordinary ZIPs
 ```
 
 The `mods` folder sits beside LiteralCrab.asi. Each subfolder containing a `mod.ini` is one mod. Mods load in ordinal, case-insensitive folder-name order.
@@ -41,9 +43,24 @@ Presentation/Adventures.lua=replace/adventures.lua
 Presentation/PauseMenu.lua=patches/pause_menu.lua
 ```
 
-A mod needs at least one `[Override]` or `[Patch]` entry. If any script in a mod is missing, outside the mod folder, not a `.lua` file, larger than 4 MiB or precompiled bytecode, the whole mod is skipped and the reason is logged. Other mods still load.
+Only `[Mod]` is needed for a mod that consists of assets alone. If any script in a mod is missing, outside the mod folder, not a `.lua` file, larger than 4 MiB or precompiled bytecode, the whole mod is skipped and the reason is logged. Other mods still load.
 
 Players change options and `Enabled` in `user.ini`, using the same sections. A mod update then does not overwrite their choices.
+
+## Asset mods
+
+An asset mod mirrors the game's `assets` folder. Put the files loose in `mods/<mod>/assets/`, or pack that `assets` folder into one or more ordinary `.zip` files placed directly in `mods/<mod>/`. Any common ZIP tool works (Deflate or Store compression; no encryption or ZIP64). There is no need to rebuild the game's own archive format.
+
+Each file is placed by its path below `assets`:
+
+- **A file the game keeps on disk** (videos, sound banks, an archive as a whole): the mod's file replaces it. A whole replacement archive may be an ordinary ZIP; it is converted.
+- **A file inside one of the game's archives**: for example, `assets/ui/controllerbuttons.mtb` and `assets/ui/textures/0389b6b276ccc3af.tbody` are members of `assets/ui/ui.zip`. LiteralCrab looks for the member in the archives of the file's folder, then of each parent folder. The first archive containing it gets the mod's version. A file that no archive contains is added to the folder's archive when that folder has exactly one archive; otherwise it is skipped and logged.
+
+Ship only the files you changed. Unchanged members come from the player's own game files, so a mod never needs to redistribute game content. Mods are combined per file: if two mods change the same file, the first in load order wins and the conflict is logged.
+
+At startup, every archive a mod touches is rebuilt once in the game's layout under `mods/.cache/`. It is rebuilt again only when the game archive or a contributing mod file changes; the log reports how long preparation took. The cache is safe to delete. While the game runs, opening an affected file is redirected to the mod or cache copy. Writes always reach the original path, and all other files are untouched.
+
+The log lists each mod's number of asset files and every file that was skipped, with the reason. With `Trace=1`, every redirected open is logged too.
 
 ## Chunk names
 

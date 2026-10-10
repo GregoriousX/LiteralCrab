@@ -19,7 +19,15 @@ set(DI1_COMMON
 )
 # Engine-neutral script mod loader; src/di1/mods.cpp holds the DI1 Lua API profile.
 set(SCRIPT_MODS src/mods/mod_index.cpp src/mods/lua_mods.cpp)
-add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} src/di1/engine.cpp src/di1/mods.cpp src/di1/main.cpp di1/exports.def)
+# Asset mods: ordinary ZIP packages, the game's archive layout and file redirection.
+set(ASSET_MODS src/mods/zip.cpp src/mods/asset_mods.cpp src/mods/file_redirect.cpp src/third_party/puff/puff.c)
+# Vendored zlib puff, kept byte-for-byte; its narrowing conversions are intentional.
+set_source_files_properties(src/third_party/puff/puff.c PROPERTIES COMPILE_OPTIONS /wd4244)
+# Startup-only discovery and archive building: optimized for size. The per-call paths (chunk and
+# file lookups, hooks) stay in their own files at full speed.
+set_source_files_properties(src/mods/mod_index.cpp src/mods/asset_mods.cpp PROPERTIES COMPILE_OPTIONS /O1)
+set(MINHOOK src/minhook/buffer.c src/minhook/hook.c src/minhook/trampoline.c src/minhook/hde/hde32.c)
+add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} src/di1/engine.cpp src/di1/mods.cpp src/di1/main.cpp di1/exports.def)
 set_target_properties(LiteralCrab PROPERTIES PREFIX "" SUFFIX ".asi")
 target_include_directories(LiteralCrab PRIVATE include src)
 target_compile_definitions(LiteralCrab PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS LITERALCRAB_VERSION="${PROJECT_VERSION}")
@@ -47,6 +55,11 @@ if(CRABELOADER_DI1_TESTS)
     target_compile_definitions(di1_mod_index_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(di1_mod_index_tests PRIVATE /W4 /utf-8 /permissive-)
     add_test(NAME di1_mod_index COMMAND di1_mod_index_tests)
+    add_executable(di1_asset_mods_tests di1/tests/asset_mods.cpp src/mods/mod_index.cpp ${ASSET_MODS} ${MINHOOK})
+    target_include_directories(di1_asset_mods_tests PRIVATE include src)
+    target_compile_definitions(di1_asset_mods_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(di1_asset_mods_tests PRIVATE /W4 /utf-8 /permissive-)
+    add_test(NAME di1_asset_mods COMMAND di1_asset_mods_tests)
     # The mod runtime is exercised against the reference Lua 5.1.5 interpreter, the version the
     # game embeds. Downloaded from lua.org at configure time and pinned by hash; tests only.
     option(CRABELOADER_LUA_TESTS "Test the script mod runtime against reference Lua 5.1.5" ON)
