@@ -28,7 +28,6 @@ namespace {
     bool hasWindowedRect{}, hasApplied{};
     Mode appliedMode = Mode::Borderless;
     DWORD windowThread{};
-    HMODULE d3dModule{};
     IDirect3D9* deviceParent{};
     UINT deviceAdapter{};
     HWND deviceFocus{};
@@ -61,8 +60,6 @@ namespace {
     HRESULT STDMETHODCALLTYPE createDeviceEx(IDirect3D9Ex*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, D3DDISPLAYMODEEX*, IDirect3DDevice9Ex**);
     HRESULT STDMETHODCALLTYPE resetEx(IDirect3DDevice9Ex*, D3DPRESENT_PARAMETERS*, D3DDISPLAYMODEEX*);
     HRESULT STDMETHODCALLTYPE presentEx(IDirect3DDevice9Ex*, const RECT*, const RECT*, HWND, const RGNDATA*, DWORD);
-    IDirect3D9* WINAPI create9(UINT);
-    HRESULT WINAPI create9Ex(UINT, IDirect3D9Ex**);
     void removeMethod(void*& target) {
         if (target) { MH_DisableHook(target); MH_RemoveHook(target); target = nullptr; }
     }
@@ -80,6 +77,9 @@ namespace {
         AcquireSRWLockShared(&hookLock);
         void* found{};
         for (const auto& method : methods) if (method.target == target) { found = method.original; break; }
+        // An overlay may replace the vtable slot and then call the hooked runtime method itself.
+        // With a single known implementation, its trampoline is still the correct original.
+        if (!found && methods.size() == 1) found = methods.front().original;
         ReleaseSRWLockShared(&hookLock);
         return found;
     }
@@ -171,6 +171,8 @@ namespace {
         appliedMode = mode; hasApplied = true; applying = false;
     }
     void queueWindow() {
+        // Runs on every Present: the rarely set flag is checked before any window query.
+        if (!dirty.load(std::memory_order_relaxed)) return;
         const HWND hwnd = window.load();
         if (!hwnd || !managed || IsIconic(hwnd) || !dirty.exchange(false)) return;
         if (GetCurrentThreadId() == windowThread) applyWindow();
@@ -178,11 +180,16 @@ namespace {
     }
     void detachWindow() {
         HWND hwnd = window.exchange(nullptr);
-        if (hwnd && originalWndProc && IsWindow(hwnd) &&
-            reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_WNDPROC)) == wndProc)
-            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWndProc));
-        originalWndProc = nullptr;
         bufferWidth = 0; bufferHeight = 0; managed = false; hasApplied = false; hasWindowedRect = false;
+        if (!hwnd || !originalWndProc || !IsWindow(hwnd)) { originalWndProc = nullptr; return; }
+        if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_WNDPROC)) == wndProc) {
+            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWndProc));
+            originalWndProc = nullptr;
+        } else {
+            // A later subclass (e.g. an overlay) still calls wndProc. Keep forwarding to the
+            // game's procedure; with managed=false the hook is a pass-through.
+            window = hwnd;
+        }
     }
     bool attachWindow(HWND hwnd) {
         if (window.load() == hwnd && originalWndProc) return true;
@@ -213,7 +220,8 @@ namespace {
             }
         }
         unsigned refresh = incoming.FullScreen_RefreshRateInHz;
-        if (refresh <= 1) {
+        // The monitor rate only matters for VSync=auto with a frame cap.
+        if (refresh <= 1 && options.vsync == VSync::Auto && options.frameLimit) {
             MONITORINFOEXW monitor{}; monitor.cbSize = sizeof(monitor);
             DEVMODEW mode{}; mode.dmSize = sizeof(mode);
             if (GetMonitorInfoW(MonitorFromWindow(effective.hDeviceWindow,MONITOR_DEFAULTTONEAREST), &monitor) &&
@@ -229,7 +237,7 @@ namespace {
     D3DDISPLAYMODEEX* fullscreenMode(D3DPRESENT_PARAMETERS& effective, IDirect3D9* parent,
                                     UINT adapter, const D3DDISPLAYMODEEX* incoming, D3DDISPLAYMODEEX& mode) {
         if (effective.Windowed) return nullptr;
-        mode = {}; mode.Size = sizeof(mode);
+        mode = {};
         if (incoming) mode = *incoming;
         else {
             IDirect3D9Ex* extended{};
@@ -260,7 +268,7 @@ namespace {
     IDirect3D9* WINAPI create9(UINT version) {
         // Called by the engine after loader-lock release. No D3D/GPU work runs in DllMain.
         if (!realFactory) {
-            d3dModule = LoadLibraryW(L"d3d9.dll");
+            const HMODULE d3dModule = LoadLibraryW(L"d3d9.dll");
             const auto nativeResolve = reinterpret_cast<decltype(&GetProcAddress)>(resolverImport.original);
             if (d3dModule && nativeResolve) realFactory = reinterpret_cast<Factory>(nativeResolve(d3dModule,"Direct3DCreate9"));
         }
@@ -274,7 +282,7 @@ namespace {
     }
     HRESULT WINAPI create9Ex(UINT version, IDirect3D9Ex** output) {
         if (!realFactoryEx) {
-            d3dModule = LoadLibraryW(L"d3d9.dll");
+            const HMODULE d3dModule = LoadLibraryW(L"d3d9.dll");
             const auto nativeResolve = reinterpret_cast<decltype(&GetProcAddress)>(resolverImport.original);
             if (d3dModule && nativeResolve) realFactoryEx = reinterpret_cast<FactoryEx>(nativeResolve(d3dModule,"Direct3DCreate9Ex"));
         }
@@ -291,9 +299,10 @@ namespace {
         const auto resolved = original(module,name);
         const DWORD error = GetLastError();
         FARPROC result = resolved;
-        if (resolved && reinterpret_cast<std::uintptr_t>(name) > 0xFFFF && module == GetModuleHandleW(L"d3d9.dll")) {
-            // DI1 resolves Direct3DCreate9Ex dynamically before using its delay-import fallback.
-            // Only the host's lookup is redirected; other DLLs keep their own imports.
+        // DI1 resolves Direct3DCreate9Ex dynamically before using its delay-import fallback.
+        // Only the host's lookup is redirected; other DLLs keep their own imports.
+        if (resolved && reinterpret_cast<std::uintptr_t>(name) > 0xFFFF && !strncmp(name,"Direct3DCreate9",15) &&
+            module == GetModuleHandleW(L"d3d9.dll")) {
             if (!strcmp(name,"Direct3DCreate9Ex")) {
                 realFactoryEx = reinterpret_cast<FactoryEx>(resolved);
                 result = reinterpret_cast<FARPROC>(&create9Ex);
@@ -419,18 +428,13 @@ namespace {
     void beforePresent(IDirect3DDevice9* active, bool outer) {
         if (active != device.load() || !outer) return;
         queueWindow();
-        const auto count = ++presents;
-        if (count == 1 || count == 60 || count == 300 || count % 3000 == 0)
-            log("Present #%llu: render %ux%u; managed=%d.",count,bufferWidth.load(),bufferHeight.load(),managed.load());
+        // No periodic logging here: log() performs synchronous file I/O on the render thread.
+        if (++presents == 1)
+            log("First Present: render %ux%u; managed=%d.",bufferWidth.load(),bufferHeight.load(),managed.load());
         framePacer.pace(options.frameLimit);
     }
     void afterPresent(IDirect3DDevice9* active, HRESULT result, bool outer) {
-        if (active != device.load() || !outer) return;
-        if (FAILED(result)) installDeviceMethods(active,deviceExtended);
-        if (result == D3D_OK) {
-            const float fps = framePacer.recordPresentedFrame();
-            if (fps > 0) log("Rendered FPS: %.1f (cap %u).", fps, options.frameLimit);
-        }
+        if (FAILED(result) && outer && active == device.load()) installDeviceMethods(active,deviceExtended);
     }
     HRESULT STDMETHODCALLTYPE present(IDirect3DDevice9* active, const RECT* source, const RECT* destination, HWND overrideWindow, const RGNDATA* region) {
         const auto originalPresent = reinterpret_cast<Present>(originalFor(active,17,presentMethods));
@@ -470,7 +474,8 @@ namespace {
         const auto original = reinterpret_cast<Fn>(originalFor(active,3,cooperativeMethods));
         if (!original) return D3DERR_INVALIDCALL;
         const HRESULT result = original(active);
-        if (active == device.load()) installDeviceMethods(active,deviceExtended);
+        // Polled every frame by many engines; only a lost device can carry a new method table.
+        if (FAILED(result) && active == device.load()) installDeviceMethods(active,deviceExtended);
         return result;
     }
     BOOL WINAPI screenToClient(HWND hwnd, LPPOINT point) {
@@ -506,6 +511,11 @@ namespace {
         }
         return original(hwnd, command);
     }
+    // Managed modes can switch without touching the game's D3D resources. Exclusive needs a restart.
+    bool requestManagedMode(Mode mode) {
+        if (!managed || mode == Mode::Fullscreen) return false;
+        requestedMode = mode; dirty = true; return true;
+    }
     LRESULT CALLBACK wndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         if (message == applyMessage) { applyWindow(); return 0; }
         if (message == WM_SYSKEYDOWN && wParam == VK_RETURN && (lParam & (1L << 29)) && options.altEnter) {
@@ -522,8 +532,7 @@ namespace {
             if (pos && pos->hwndInsertAfter == HWND_TOPMOST && !(pos->flags & SWP_NOZORDER)) pos->hwndInsertAfter = HWND_NOTOPMOST;
         }
         if (!applying && (message == WM_DISPLAYCHANGE || message == WM_STYLECHANGED || message == WM_EXITSIZEMOVE || message == WM_SETFOCUS)) dirty = true;
-        if (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE) ClipCursor(nullptr);
-        if (message == WM_KILLFOCUS) ClipCursor(nullptr);
+        if ((message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE) || message == WM_KILLFOCUS) ClipCursor(nullptr);
         const WNDPROC original = originalWndProc;
         if (!original) return DefWindowProcW(hwnd, message, wParam, lParam);
         if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == SC_MINIMIZE) {
@@ -574,10 +583,6 @@ void removeDisplayHooks() {
         for (auto& method : *methods) removeMethod(method.target);
         methods->clear();
     }
-}
-bool requestManagedMode(Mode mode) {
-    if (!managed || mode == Mode::Fullscreen) return false;
-    requestedMode = mode; dirty = true; return true;
 }
 DisplaySnapshot displaySnapshot() {
     return {window.load(), bufferWidth.load(), bufferHeight.load(), requestedMode.load(), managed.load(), presents.load()};

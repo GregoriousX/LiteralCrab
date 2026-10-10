@@ -8,12 +8,9 @@ class FramePacer {
 public:
     ~FramePacer();
     void pace(unsigned limit);
-    float recordPresentedFrame();
     void reset() noexcept;
 private:
-    long long frequency{}, next{}, windowStart{};
-    unsigned windowFrames{};
-    float lastFps{};
+    long long frequency{}, next{};
     HANDLE timer{};
 };
 }

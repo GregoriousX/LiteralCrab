@@ -8,7 +8,7 @@ namespace {
     long long now() { LARGE_INTEGER value{}; QueryPerformanceCounter(&value); return value.QuadPart; }
 }
 FramePacer::~FramePacer() { if (timer) CloseHandle(timer); }
-void FramePacer::reset() noexcept { next = 0; windowStart = 0; windowFrames = 0; lastFps = 0; }
+void FramePacer::reset() noexcept { next = 0; }
 void FramePacer::pace(unsigned limit) {
     if (!frequency) { LARGE_INTEGER value{}; QueryPerformanceFrequency(&value); frequency = value.QuadPart; }
     if (!frequency || !limit) { next = 0; return; }
@@ -33,18 +33,5 @@ void FramePacer::pace(unsigned limit) {
         } else YieldProcessor();
     }
     next += period;
-}
-float FramePacer::recordPresentedFrame() {
-    if (!frequency) { LARGE_INTEGER value{}; QueryPerformanceFrequency(&value); frequency = value.QuadPart; }
-    if (!frequency) return 0;
-    const long long current = now();
-    if (!windowStart) { windowStart = current; windowFrames = 0; }
-    ++windowFrames;
-    if (current - windowStart >= frequency * 2) {
-        lastFps = static_cast<float>(static_cast<double>(windowFrames) * frequency / (current - windowStart));
-        windowFrames = 0; windowStart = current;
-        return lastFps;
-    }
-    return 0;
 }
 }

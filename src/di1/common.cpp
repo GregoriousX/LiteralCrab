@@ -46,7 +46,7 @@ void openLogAndConfig(HMODULE module) {
     if (!_wcsicmp(sync,L"off")) settings.vsync = VSync::Off;
     else if (!_wcsicmp(sync,L"on")) settings.vsync = VSync::On;
     else if (_wcsicmp(sync,L"auto")) log("Invalid VSync; using auto.");
-    log("LiteralCrab DI1 ASI 0.1.0; upstream dev 7f251e8eec5de534a2ed9b8efa0694f259706f0f.");
+    log("LiteralCrab DI1 ASI " LITERALCRAB_VERSION "; upstream dev 7f251e8eec5de534a2ed9b8efa0694f259706f0f.");
     log("Display mode: %ls; resolution unlock=%d; UI aspect=%d; FOV=%d.",
         modeName(settings.mode), settings.unlockResolutions, settings.fixUiAspect, settings.fixFov);
     log("Frame limit=%u FPS (0=unlimited); VSync=%ls.", settings.frameLimit,
