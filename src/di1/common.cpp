@@ -64,6 +64,7 @@ void openLogAndConfig(HMODULE module) {
     }
     settings.motionBlur = GetPrivateProfileIntW(L"PostProcessing", L"MotionBlur", 1, iniPath) != 0;
     settings.depthOfField = GetPrivateProfileIntW(L"PostProcessing", L"DepthOfField", 1, iniPath) != 0;
+    settings.bloom = GetPrivateProfileIntW(L"PostProcessing", L"Bloom", 1, iniPath) != 0;
     settings.swapXY = GetPrivateProfileIntW(L"Controller", L"SwapXY", 0, iniPath) != 0;
     const auto limitScale = GetPrivateProfileIntW(L"ToyBox", L"LimitScale", 1, iniPath);
     if (limitScale >= 1 && limitScale <= 100) settings.toyBoxLimitScale = limitScale;

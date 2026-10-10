@@ -28,6 +28,7 @@ struct Config {
     // Post-processing effects the scene settings may enable; false forces them off everywhere.
     bool motionBlur = true;
     bool depthOfField = true;
+    bool bloom = true;
     // Exchange the X and Y buttons of XInput controllers.
     bool swapXY = false;
     // Multiplier for the Toy Box editor's usage limits (the "memory" meter); 1 keeps the game's.
