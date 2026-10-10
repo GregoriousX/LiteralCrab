@@ -9,6 +9,22 @@
 namespace {
     HMODULE self{};
     std::atomic<bool> initialized{};
+    // Without DPI awareness Windows scaling (e.g. 150%) virtualizes the game window: a 4K back
+    // buffer is shrunk into a 2560x1440 logical client and stretched again by DWM, and mouse
+    // mapping gains the same ratio. Must run before the game creates its window.
+    void enableDpiAwareness() {
+        using SetContext = BOOL (WINAPI*)(HANDLE);
+        const HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        const auto setContext = user32 ? reinterpret_cast<SetContext>(GetProcAddress(user32, "SetProcessDpiAwarenessContext")) : nullptr;
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 (Windows 10 1703+).
+        if (setContext && setContext(reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4))))
+            crabe::di1::log("DPI awareness: per-monitor v2; the game window uses physical pixels.");
+        else if (setContext && GetLastError() == ERROR_ACCESS_DENIED)
+            crabe::di1::log("DPI awareness already set for this process (manifest or compatibility setting).");
+        else if (SetProcessDPIAware())
+            crabe::di1::log("DPI awareness: system aware.");
+        else crabe::di1::log("DPI awareness could not be enabled (Win32 %lu).", GetLastError());
+    }
     void initialize() {
         if (initialized.exchange(true)) return;
         crabe::di1::openLogAndConfig(self);
@@ -21,6 +37,7 @@ namespace {
             crabe::di1::log("REFUSED: executable is not the measured Disney Infinity 1.0 Gold PC build. No hooks installed.");
             return;
         }
+        enableDpiAwareness();
         const auto status = MH_Initialize();
         if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) {
             crabe::di1::log("MinHook initialization refused: %s.", MH_StatusToString(status)); return;
