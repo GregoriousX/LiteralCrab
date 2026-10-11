@@ -26,13 +26,15 @@ set_source_files_properties(src/third_party/puff/puff.c PROPERTIES COMPILE_OPTIO
 # Startup-only discovery and archive building: optimized for size. The per-call paths (chunk and
 # file lookups, hooks) stay in their own files at full speed.
 set_source_files_properties(src/mods/mod_index.cpp src/mods/asset_mods.cpp PROPERTIES COMPILE_OPTIONS /O1)
+# Toy Box packages: save file formats, the converted library and server mirroring.
+set(TOYBOXES src/toyboxes/save_file.cpp src/toyboxes/library.cpp src/toyboxes/server.cpp)
 set(MINHOOK src/minhook/buffer.c src/minhook/hook.c src/minhook/trampoline.c src/minhook/hde/hde32.c)
-add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} src/di1/engine.cpp src/di1/mods.cpp src/di1/adapters.cpp src/di1/asset_loader.cpp src/di1/camera.cpp src/di1/character_freedom.cpp src/di1/controller.cpp src/di1/gui_screens.cpp src/di1/intro.cpp src/di1/post_effects.cpp src/di1/main.cpp di1/exports.def)
+add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} ${TOYBOXES} src/di1/engine.cpp src/di1/mods.cpp src/di1/adapters.cpp src/di1/asset_loader.cpp src/di1/camera.cpp src/di1/character_freedom.cpp src/di1/controller.cpp src/di1/gui_screens.cpp src/di1/intro.cpp src/di1/post_effects.cpp src/di1/toybox_share.cpp src/di1/main.cpp di1/exports.def)
 set_target_properties(LiteralCrab PROPERTIES PREFIX "" SUFFIX ".asi")
 target_include_directories(LiteralCrab PRIVATE include src)
 target_compile_definitions(LiteralCrab PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS LITERALCRAB_VERSION="${PROJECT_VERSION}")
 target_compile_options(LiteralCrab PRIVATE /W4 /utf-8 /permissive-)
-target_link_libraries(LiteralCrab PRIVATE user32 gdi32)
+target_link_libraries(LiteralCrab PRIVATE user32 gdi32 winhttp)
 add_custom_command(TARGET LiteralCrab POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/di1/LiteralCrab.ini" "$<TARGET_FILE_DIR:LiteralCrab>/LiteralCrab.ini")
@@ -60,6 +62,13 @@ if(CRABELOADER_DI1_TESTS)
     target_compile_definitions(di1_asset_mods_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(di1_asset_mods_tests PRIVATE /W4 /utf-8 /permissive-)
     add_test(NAME di1_asset_mods COMMAND di1_asset_mods_tests)
+    add_executable(di1_toyboxes_tests di1/tests/toyboxes.cpp src/toyboxes/save_file.cpp src/toyboxes/library.cpp
+        src/toyboxes/server.cpp src/mods/zip.cpp src/third_party/puff/puff.c)
+    target_link_libraries(di1_toyboxes_tests PRIVATE winhttp)
+    target_include_directories(di1_toyboxes_tests PRIVATE src)
+    target_compile_definitions(di1_toyboxes_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(di1_toyboxes_tests PRIVATE /W4 /utf-8 /permissive-)
+    add_test(NAME di1_toyboxes COMMAND di1_toyboxes_tests)
     # The mod runtime is exercised against the reference Lua 5.1.5 interpreter, the version the
     # game embeds. Downloaded from lua.org at configure time and pinned by hash; tests only.
     option(CRABELOADER_LUA_TESTS "Test the script mod runtime against reference Lua 5.1.5" ON)

@@ -21,6 +21,7 @@ Every option outside the display fixes is **off by default**. With the default s
 - Swap the X and Y buttons of Xbox-compatible controllers.
 - Raise the Toy Box editor's object and memory limits.
 - Play any character in any play set.
+- Toy Box Share restored, with Toy Boxes from ZIP packages or loose saves (PC, PS3 and Wii U) in the `toyboxes` folder, and experimentally from web servers.
 
 **Mods**
 - Script mods: replace or patch the game's Lua scripts without editing game files.
@@ -57,7 +58,7 @@ MotionBlur=0
 
 The INI groups its settings by topic and explains each one. See the [full configuration guide](di1/README.md) for every option.
 
-Some options work through the mod loader and need `[Mods] Enabled=1` (the default): `[ToyBox] LimitScale` and `[Gameplay] CharactersInAnyPlayset`.
+Some options work through the mod loader and need `[Mods] Enabled=1` (the default): `[ToyBox] LimitScale`, `[Gameplay] CharactersInAnyPlayset` and the `[ToyBoxes]` menu entry.
 
 ## Compatibility
 

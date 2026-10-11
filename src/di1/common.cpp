@@ -71,6 +71,19 @@ void openLogAndConfig(HMODULE module) {
     else log("Invalid ToyBox LimitScale; using the game's limits.");
     settings.charactersInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"CharactersInAnyPlayset", 0, iniPath) != 0;
     settings.skipIntro = GetPrivateProfileIntW(L"Startup", L"SkipIntro", 0, iniPath) != 0;
+    settings.toyBoxShare = GetPrivateProfileIntW(L"ToyBoxes", L"Enabled", 0, iniPath) != 0;
+    std::wstring servers(4096, wchar_t{});
+    servers.resize(GetPrivateProfileStringW(L"ToyBoxes", L"Servers", L"", servers.data(), 4096, iniPath));
+    settings.toyBoxServers = std::move(servers);
+    const auto ranged = [&](const wchar_t* key, unsigned fallback, unsigned low, unsigned high) {
+        const auto value = GetPrivateProfileIntW(L"ToyBoxes", key, static_cast<INT>(fallback), iniPath);
+        if (value >= low && value <= high) return value;
+        log("Invalid ToyBoxes %ls; using %u.", key, fallback);
+        return fallback;
+    };
+    settings.toyBoxMaximum = ranged(L"MaxToyBoxes", 5000, 1, 20000);
+    settings.toyBoxServerPackageMB = ranged(L"ServerMaxPackageMB", 32, 1, 1024);
+    settings.toyBoxServerMirrorMB = ranged(L"ServerMirrorMB", 1024, 16, 65536);
     log("LiteralCrab DI1 ASI " LITERALCRAB_VERSION "; upstream dev 7f251e8eec5de534a2ed9b8efa0694f259706f0f.");
     log("Display mode: %ls; resolution unlock=%d; UI aspect=%d; FOV=%d.",
         modeName(settings.mode), settings.unlockResolutions, settings.fixUiAspect, settings.fixFov);

@@ -7,6 +7,7 @@
 #include "di1/character_freedom.hpp"
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
+#include "di1/toybox_share.hpp"
 #include "minhook/MinHook.h"
 #include "mods/file_redirect.hpp"
 #include "mods/lua_mods.hpp"
@@ -145,7 +146,8 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
 bool installMods(HMODULE host) {
     const auto& settings = config();
     if (!settings.mods) {
-        log("Mods: disabled by configuration.%s", settings.toyBoxLimitScale > 1 ? " ToyBox LimitScale needs [Mods] Enabled=1." : "");
+        log("Mods: disabled by configuration.%s%s", settings.toyBoxLimitScale > 1 ? " ToyBox LimitScale needs [Mods] Enabled=1." : "",
+            toyBoxShareActive() ? " The Toy Box Share entry needs [Mods] Enabled=1." : "");
         return true;
     }
     if (!*pluginDirectory()) return false;
@@ -159,6 +161,8 @@ bool installMods(HMODULE host) {
         installEngineFeatures(host, index.mods);
         if (characterFreedomActive())
             index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "playable_avatars", std::string(playableAvatarsPatch), "{}");
+        if (toyBoxShareActive())
+            index.addBuiltinPatch({"presentation/toyboxselectmenu.lua"}, "toybox_share", std::string(toyBoxShareMenuPatch), "{}");
         if (settings.toyBoxLimitScale > 1)
             index.addBuiltinPatch({"toyboxstats_limits.lua", "contains:ToyBoxLimits ="}, "toybox_limits", std::string(toyBoxLimitsPatch),
                 "{Scale=" + std::to_string(settings.toyBoxLimitScale) + "}");

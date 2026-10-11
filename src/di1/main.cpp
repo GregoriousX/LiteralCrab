@@ -8,6 +8,7 @@
 #include "di1/engine.hpp"
 #include "di1/mods.hpp"
 #include "di1/post_effects.hpp"
+#include "di1/toybox_share.hpp"
 #include "minhook/MinHook.h"
 #include <atomic>
 #include <cwchar>
@@ -71,6 +72,8 @@ namespace {
             crabe::di1::log("Gameplay: CharactersInAnyPlayset needs [Mods] Enabled=1; nothing changed.");
         else
             crabe::di1::installCharacterFreedom(host, crabe::di1::config());
+        // Before the mods: its Toy Box menu entry is a script patch the mod loader adds.
+        crabe::di1::installToyBoxShare(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
         crabe::di1::installMods(host);
     }

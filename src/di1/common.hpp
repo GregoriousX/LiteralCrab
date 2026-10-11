@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include "di1/policy.hpp"
 
 namespace crabe::di1 {
@@ -37,6 +38,11 @@ struct Config {
     bool charactersInAnyPlayset = false;
     // Start without the logo movies.
     bool skipIntro = false;
+    // Toy Box Share with the Toy Boxes of the toyboxes folder and of these servers (URLs).
+    bool toyBoxShare = false;
+    std::wstring toyBoxServers;
+    // Safety limits for packages: Toy Boxes listed, one server package, the whole server mirror.
+    unsigned toyBoxMaximum = 5000, toyBoxServerPackageMB = 32, toyBoxServerMirrorMB = 1024;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;
