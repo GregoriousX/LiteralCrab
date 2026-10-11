@@ -3,6 +3,7 @@
 #include "di1/character_freedom.hpp"
 #include "di1/common.hpp"
 #include "di1/controller.hpp"
+#include "di1/intro.hpp"
 #include "di1/display.hpp"
 #include "di1/engine.hpp"
 #include "di1/mods.hpp"
@@ -64,6 +65,7 @@ namespace {
         crabe::di1::installCameraHooks(host, crabe::di1::config());
         crabe::di1::installPostEffectHooks(host, crabe::di1::config());
         crabe::di1::installControllerHooks(host, crabe::di1::config());
+        crabe::di1::installIntroSkip(host, crabe::di1::config());
         // Both halves or neither: the zone list half is a script patch, so it needs mods enabled.
         if (crabe::di1::config().charactersInAnyPlayset && !crabe::di1::config().mods)
             crabe::di1::log("Gameplay: CharactersInAnyPlayset needs [Mods] Enabled=1; nothing changed.");

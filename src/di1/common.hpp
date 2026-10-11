@@ -35,6 +35,8 @@ struct Config {
     unsigned toyBoxLimitScale = 1;
     // Let every character play in every play set (needs mods enabled for the zone list half).
     bool charactersInAnyPlayset = false;
+    // Start without the logo movies.
+    bool skipIntro = false;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;
