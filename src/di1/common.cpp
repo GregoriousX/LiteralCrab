@@ -70,6 +70,7 @@ void openLogAndConfig(HMODULE module) {
     if (limitScale >= 1 && limitScale <= 100) settings.toyBoxLimitScale = limitScale;
     else log("Invalid ToyBox LimitScale; using the game's limits.");
     settings.charactersInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"CharactersInAnyPlayset", 0, iniPath) != 0;
+    settings.skipIntro = GetPrivateProfileIntW(L"Startup", L"SkipIntro", 0, iniPath) != 0;
     log("LiteralCrab DI1 ASI " LITERALCRAB_VERSION "; upstream dev 7f251e8eec5de534a2ed9b8efa0694f259706f0f.");
     log("Display mode: %ls; resolution unlock=%d; UI aspect=%d; FOV=%d.",
         modeName(settings.mode), settings.unlockResolutions, settings.fixUiAspect, settings.fixFov);
