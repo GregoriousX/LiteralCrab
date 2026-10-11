@@ -1,23 +1,37 @@
 # LiteralCrab
 
-LiteralCrab is a 32-bit ASI plugin for **Disney Infinity 1.0 Gold Edition (Windows PC)**. It adds display and frame-rate options based on [CrabeLoader](https://github.com/LucasLhomme/CrabeLoader).
+LiteralCrab is a 32-bit ASI plugin for **Disney Infinity 1.0 Gold Edition (Windows PC)**. It fixes the PC version's display and frame-rate limits, adds optional quality-of-life and gameplay options, and loads script and asset mods. It is based on [CrabeLoader](https://github.com/LucasLhomme/CrabeLoader).
 
-This is a display-focused port, not a port of CrabeLoader's Disney Infinity 3.0 modding features.
+Every option outside the display fixes is **off by default**. With the default settings LiteralCrab does not change gameplay, characters or simulation speed.
 
 ## Features
 
-- Borderless, windowed and exclusive fullscreen modes.
+**Display and performance**
+- Borderless, windowed and exclusive fullscreen modes, with Alt+Enter switching.
 - Additional resolutions and aspect ratios, including ultrawide displays.
 - Field-of-view correction and centered 16:9 menus and HUD.
 - Mouse scaling when the window and rendering resolutions differ.
 - Configurable FPS limit (15–1000 FPS or uncapped) and VSync.
-- Better Alt+Tab behavior and support for Windows screenshot shortcuts in borderless/windowed modes.
+- Better Alt+Tab behavior and support for Windows screenshot shortcuts.
 
-The plugin does not change gameplay, characters or game simulation speed.
+**Optional settings** (all off by default)
+- Skip the startup logo movies.
+- Switch off motion blur, depth of field and bloom individually.
+- Choose how long the camera waits before swinging back behind the character.
+- Swap the X and Y buttons of Xbox-compatible controllers.
+- Raise the Toy Box editor's object and memory limits.
+- Play any character in any play set.
+
+**Mods**
+- Script mods: replace or patch the game's Lua scripts without editing game files.
+- Asset mods: replace models, textures, sounds and other files with loose files or ordinary ZIPs. The game's archives are never rebuilt.
+- Verified engine adapters and features for mods, such as awarding tools, placing power discs or restoring console Toy Box Hub menus.
+
+See the [modding guide](di1/MODDING.md).
 
 ## Installation
 
-1. Download **LiteralCrab-DI1-0.1.0-x86.zip** from [Releases](https://github.com/GregoriousX/LiteralCrab/releases).
+1. Download the latest **LiteralCrab-DI1-&lt;version&gt;-x86.zip** from [Releases](https://github.com/GregoriousX/LiteralCrab/releases).
 2. Copy `LiteralCrab.asi` and `LiteralCrab.ini` into the game folder, next to `DisneyInfinity1.exe`.
 3. Install a compatible **32-bit ASI loader**. The tested option is [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader), installed as `dinput8.dll`.
 4. Start the game.
@@ -26,24 +40,28 @@ Keep the original `binkw32.dll` unchanged. If you have another display or resolu
 
 ## Configuration
 
-Edit `LiteralCrab.ini` to change the settings:
+Edit `LiteralCrab.ini` while the game is closed; changes apply on the next start. For example:
 
 ```ini
 [Display]
 Mode=borderless
 FrameLimit=120
 VSync=auto
+
+[Startup]
+SkipIntro=1
+
+[PostProcessing]
+MotionBlur=0
 ```
 
-- `Mode`: `borderless`, `windowed` or `fullscreen`.
-- `FrameLimit`: `15`–`1000`, or `0` for uncapped FPS.
-- `VSync`: `auto`, `on` or `off`.
+The INI groups its settings by topic and explains each one. See the [full configuration guide](di1/README.md) for every option.
 
-Restart the game after changing settings. See the [full configuration guide](di1/README.md) for other options.
+Some options work through the mod loader and need `[Mods] Enabled=1` (the default): `[ToyBox] LimitScale` and `[Gameplay] CharactersInAnyPlayset`.
 
 ## Compatibility
 
-LiteralCrab currently supports the verified Disney Infinity 1.0 Gold Edition PC executable. Unsupported game builds are rejected. Not all gameplay scenarios or display setups have been tested.
+LiteralCrab supports the verified Disney Infinity 1.0 Gold Edition PC executable. Every hook and patch checks the game's code first; on another build the plugin refuses to start, and a feature whose code differs is left out and logged in `LiteralCrab.log`. Not all gameplay scenarios or display setups have been tested.
 
 ## Build from source
 
@@ -58,9 +76,9 @@ Output: `build-di1/Release/LiteralCrab.asi`.
 
 ## Credits
 
-**[Lucas Lhomme (@LucasLhomme)](https://github.com/LucasLhomme)** — creator of [CrabeLoader](https://github.com/LucasLhomme/CrabeLoader), the original project this repository is forked from.
+**[Lucas Lhomme (@LucasLhomme)](https://github.com/LucasLhomme)** — creator of [CrabeLoader](https://github.com/LucasLhomme/CrabeLoader), the original project this repository is forked from. LiteralCrab is based on CrabeLoader's `dev` branch (commit [`7f251e8`](https://github.com/LucasLhomme/CrabeLoader/commit/7f251e8eec5de534a2ed9b8efa0694f259706f0f)) and adapts its display features for Disney Infinity 1.0. The original README is available [here](di1/UPSTREAM-README.md).
 
-LiteralCrab is based on CrabeLoader's `dev` branch (commit [`7f251e8`](https://github.com/LucasLhomme/CrabeLoader/commit/7f251e8eec5de534a2ed9b8efa0694f259706f0f)) and adapts its display features for Disney Infinity 1.0. The original README is available [here](di1/UPSTREAM-README.md).
+**[Philip Parkinson II (@philparkinson1204)](https://github.com/philparkinson1204)** — [InfinityUnlocked](https://github.com/philparkinson1204/InfinityUnlocked), which identified the native play set restrictions. `[Gameplay] CharactersInAnyPlayset` builds on that research, applied in memory without modifying the executable or replacing archives.
 
 ## License
 

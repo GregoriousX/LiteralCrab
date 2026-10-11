@@ -1,6 +1,6 @@
 # LiteralCrab configuration guide
 
-Edit **LiteralCrab.ini** beside **LiteralCrab.asi**, then restart the game. Display options belong in the `[Display]` section; the script mod loader uses `[Mods]`. Use `1` to enable a switch and `0` to disable it.
+Edit **LiteralCrab.ini** beside **LiteralCrab.asi** while the game is closed; changes apply on the next start. Display options belong in `[Display]`, the optional settings in their own sections and the mod loader in `[Mods]`. Use `1` to enable a switch and `0` to disable it. Every option outside `[Display]` defaults to the game's own behavior and installs nothing until it is changed.
 
 ## Complete default configuration
 
@@ -18,6 +18,26 @@ RememberMode=1
 FrameLimit=120
 VSync=auto
 Diagnostics=0
+
+[Startup]
+SkipIntro=0
+
+[PostProcessing]
+MotionBlur=1
+DepthOfField=1
+Bloom=1
+
+[Camera]
+ReturnDelay=default
+
+[Controller]
+SwapXY=0
+
+[ToyBox]
+LimitScale=1
+
+[Gameplay]
+CharactersInAnyPlayset=0
 
 [Mods]
 Enabled=1
@@ -40,6 +60,14 @@ Trace=0
 | `FrameLimit` | `120` | Rendering cap: `15`–`1000` FPS, or `0` for uncapped output. |
 | `VSync` | `auto` | `auto` bypasses VSync when uncapped or when the cap is at least the monitor refresh rate; `on` always synchronizes; `off` always bypasses it. |
 | `Diagnostics` | `0` | Troubleshooting only. `1` writes frame-time statistics (average and worst frame, counts above 20/33/50 ms, time blocked in Present) and the game's mouse/focus state to LiteralCrab.log on each focus change and on exit. Nothing is written per frame. |
+| `[Startup]` `SkipIntro` | `0` | `1` starts without the logo movies. The game is sent down the path it already takes for logo movies that are not installed; the movie files stay untouched and the menu's attract movie and in-game cinematics still play. |
+| `[PostProcessing]` `MotionBlur` | `1` | `0` removes the motion blur seen when the camera turns quickly, in every world. `1` keeps each world's own setting. |
+| `[PostProcessing]` `DepthOfField` | `1` | `0` removes the distance blur that some worlds and Toy Box skies use. |
+| `[PostProcessing]` `Bloom` | `1` | `0` removes the glow around bright lights, the sky and shiny surfaces. |
+| `[Camera]` `ReturnDelay` | `default` | Seconds the camera waits after you turn it before it swings back behind the character, for every camera: `0` returns at once, `5` waits five seconds (up to `3600`). `default` keeps each camera's own timing. |
+| `[Controller]` `SwapXY` | `0` | `1` exchanges the X and Y buttons of Xbox-compatible (XInput) controllers everywhere in the game. On-screen prompts keep the original letters. |
+| `[ToyBox]` `LimitScale` | `1` | Multiplies the Toy Box editor's limits (its "memory" meter): object costs, measured memory and frame time. `4` is generous, `10` very high, up to `100`. Very large Toy Boxes can still slow down or run out of memory. Needs `[Mods] Enabled=1`. |
+| `[Gameplay]` `CharactersInAnyPlayset` | `0` | `1` lets every character play in every play set. Only the play set checks are relaxed, in memory: other rules (for example which characters may enter Cars races), unlocks and game files stay unchanged. Needs `[Mods] Enabled=1`. |
 | `[Mods]` `Enabled` | `1` | Loads script and asset mods from the `mods` folder beside the ASI. With no mods installed nothing is hooked. `0` leaves every game script and file untouched. See [MODDING.md](MODDING.md). |
 | `[Mods]` `Trace` | `0` | For mod authors. `1` logs the name of every Lua chunk the game compiles and every file its loader requests, which are the names a mod targets. Slows loading; leave `0` for play. |
 
@@ -75,7 +103,7 @@ Direct ShareX/Alt+Print Screen capture and every ultrawide setup still require i
 - Copy LiteralCrab.asi and LiteralCrab.ini beside DisneyInfinity1.exe and use a compatible 32-bit ASI loader, such as Ultimate ASI Loader as dinput8.dll. Keep the game's original binkw32.dll.
 - Disable another display/resolution ASI before testing LiteralCrab; two plugins patching the same functions can conflict. Preserve the disabled file as a backup.
 - Change the INI while the game is closed. Alt+Enter is the supported live borderless/windowed toggle. Restart to select exclusive fullscreen.
-- Check LiteralCrab.log beside the ASI for the detected game profile, effective display mode, cap and hook failures. The log is replaced on each launch. For FPS or mouse problems, set `Diagnostics=1`, reproduce the issue, press Alt+Tab once and attach the log.
+- Check LiteralCrab.log beside the ASI for the detected game profile, effective display mode, cap, the optional settings in effect and any feature left out because the game's code differs. The log is replaced on each launch. For FPS or mouse problems, set `Diagnostics=1`, reproduce the issue, press Alt+Tab once and attach the log.
 - Unsupported executables are rejected by the version/signature checks. Missing settings use the defaults above. Unrecognized Mode/VSync values fall back to borderless/auto.
 
-Installation requires no changes to characters, gameplay scripts or game assets. Script mods are optional, separate downloads; LiteralCrab itself ships none.
+Installation requires no changes to characters, gameplay scripts or game assets, and LiteralCrab never writes to the game's files. Script mods are optional, separate downloads; LiteralCrab itself ships none.
