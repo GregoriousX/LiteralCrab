@@ -33,6 +33,8 @@ struct Config {
     bool swapXY = false;
     // Multiplier for the Toy Box editor's usage limits (the "memory" meter); 1 keeps the game's.
     unsigned toyBoxLimitScale = 1;
+    // Let every character play in every play set (needs mods enabled for the zone list half).
+    bool charactersInAnyPlayset = false;
 };
 void openLogAndConfig(HMODULE module);
 const Config& config() noexcept;
