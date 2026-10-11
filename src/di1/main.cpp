@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "di1/camera.hpp"
+#include "di1/character_freedom.hpp"
 #include "di1/common.hpp"
 #include "di1/controller.hpp"
 #include "di1/display.hpp"
@@ -63,6 +64,11 @@ namespace {
         crabe::di1::installCameraHooks(host, crabe::di1::config());
         crabe::di1::installPostEffectHooks(host, crabe::di1::config());
         crabe::di1::installControllerHooks(host, crabe::di1::config());
+        // Both halves or neither: the zone list half is a script patch, so it needs mods enabled.
+        if (crabe::di1::config().charactersInAnyPlayset && !crabe::di1::config().mods)
+            crabe::di1::log("Gameplay: CharactersInAnyPlayset needs [Mods] Enabled=1; nothing changed.");
+        else
+            crabe::di1::installCharacterFreedom(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
         crabe::di1::installMods(host);
     }

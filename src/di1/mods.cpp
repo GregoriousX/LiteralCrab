@@ -4,6 +4,7 @@
 #include "di1/mods.hpp"
 #include "di1/adapters.hpp"
 #include "di1/asset_loader.hpp"
+#include "di1/character_freedom.hpp"
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
 #include "minhook/MinHook.h"
@@ -156,6 +157,8 @@ bool installMods(HMODULE host) {
         installAssets(host, modsRoot, index.mods, messages);
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
+        if (characterFreedomActive())
+            index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "playable_avatars", std::string(playableAvatarsPatch), "{}");
         if (settings.toyBoxLimitScale > 1)
             index.addBuiltinPatch({"toyboxstats_limits.lua", "contains:ToyBoxLimits ="}, "toybox_limits", std::string(toyBoxLimitsPatch),
                 "{Scale=" + std::to_string(settings.toyBoxLimitScale) + "}");
