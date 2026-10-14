@@ -160,7 +160,11 @@ Some content needs engine behavior that the PC build lacks. A mod requests such 
 
 ## Patches from LiteralCrab options
 
-Two settings in LiteralCrab.ini work through the same script loader: `[ToyBox] LimitScale` patches `GameDB/Core/ToyBoxStats_Limits.lua`, and `[Gameplay] CharactersInAnyPlayset` patches the zone list's `PlayableAvatars`. They appear in the log as mod `LiteralCrab` (`LiteralCrab/toybox_limits`, `LiteralCrab/playable_avatars`) and run after every mod's patch for the same chunk, so a mod sees the game's own values and the option is applied last. Both are only registered while the option is on.
+Two settings in LiteralCrab.ini work through the same script loader: `[ToyBox] LimitScale` patches `GameDB/Core/ToyBoxStats_Limits.lua`, and `[Gameplay] CharactersInAnyPlayset` reads original playset membership, registers avatar variants from actor tables and enables `WantToyBoxFX`/`WantBloatFX` in the six play sets. It does not append to or replace `PlayableAvatars`. The built-in patches appear as `LiteralCrab/toybox_limits`, `LiteralCrab/character_playsets` and `LiteralCrab/character_actor_registry`, and run after every mod's patch for the same chunk. They are only registered while their option is on.
+
+The character option exposes `LiteralCrab.RegisterPlaysetAvatars(playset, commaSeparatedAvatars)` to its built-in patches. Actor-table registrations use `RumpusRoom` as a provisional home; a specific native playset takes precedence regardless of table loading order. Crystal/base records share one home. An unregistered actor keeps native suffix/fallback behavior. The native option also loads all dependency maps using the paired Toy Box load/unload route, making avatar statistics and choreography records available. If the script loader cannot be installed, native patches and the detour are removed. See the [repair notes](CHARACTER_FREEDOM_FIX.en.md) for validation limits.
+
+`LiteralCrab.IsRegisteredAvatar(actorName)` identifies names registered by the original actor/zone data. `LiteralCrab/character_preloads` preserves the common playset record's files and adds original avatar-stat and effect Includes. The effect Include is generated from existing avatar/tool dependency records and contains only choreography files; character models/AI retain their original loading route. `[Gameplay] TraceCharacterFreedom=1` reports bounded native EXP, FX-flag and file-request evidence plus actual stat-package loads; it does not grant progress. Keep it off outside diagnosis.
 
 ## Guarantees and limits
 

@@ -34,8 +34,11 @@ struct Config {
     bool swapXY = false;
     // Multiplier for the Toy Box editor's usage limits (the "memory" meter); 1 keeps the game's.
     unsigned toyBoxLimitScale = 1;
-    // Let every character play in every play set (needs mods enabled for the zone list half).
+    // Let every character play in every play set (needs mods enabled for ownership/FX data).
     bool charactersInAnyPlayset = false;
+    bool traceCharacterFreedom = false;
+    // Temporary character-freedom testing aid; native rewards remain unchanged at 1.
+    unsigned testExperienceMultiplier = 1;
     // Start without the logo movies.
     bool skipIntro = false;
     // Toy Box Share with the Toy Boxes of the toyboxes folder and of these servers (URLs).

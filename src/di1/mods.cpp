@@ -114,7 +114,7 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         const auto length = GetModuleFileNameW(host, executable, 32768);
         const wchar_t* slash = length && length < 32768 ? wcsrchr(executable, L'\\') : nullptr;
         if (list.empty() || !slash) {
-            if (trace) installAssetLoader(host, nullptr, true);
+            if (trace || config().traceCharacterFreedom) installAssetLoader(host, nullptr, trace);
             return;
         }
         const auto gameAssets = std::wstring(executable, static_cast<std::size_t>(slash - executable)) + L"\\assets";
@@ -124,7 +124,7 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         // The index is kept first: the loader hook asks it for files as soon as it is enabled.
         if (!mods::installFileRedirect(std::move(assets), &log, trace) && redirects)
             messages.push_back("Mods: files the game opens from disk cannot be replaced; those stay original.");
-        if ((members || trace) && !installAssetLoader(host, members ? &mods::readAssetMember : nullptr, trace) && members)
+        if ((members || trace || config().traceCharacterFreedom) && !installAssetLoader(host, members ? &mods::readAssetMember : nullptr, trace) && members)
             messages.push_back("Mods: files inside the game's archives cannot be replaced on this build.");
         if (redirects || members)
             messages.push_back("Mods: " + std::to_string(redirects) + " file(s) replaced on disk, " + std::to_string(members) +
@@ -159,8 +159,18 @@ bool installMods(HMODULE host) {
         installAssets(host, modsRoot, index.mods, messages);
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
-        if (characterFreedomActive())
-            index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "playable_avatars", std::string(playableAvatarsPatch), "{}");
+        if (characterFreedomActive()) {
+            index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "character_playsets", std::string(characterPlaysetsPatch), "{}");
+            index.addBuiltinPatch({"contains:ActorList"}, "character_actor_registry", std::string(characterToyboxActorsPatch), "{}");
+            index.addBuiltinPatch({"coredatamap.lua", "rumpusroomdatamap.lua", "contains:_loadforallplaysets_", "contains:avatarstats"},
+                "character_preloads", std::string(characterPreloadsPatch), "{}");
+            if (settings.traceCharacterFreedom) {
+                index.addBuiltinPatch({"contains:Customization"}, "character_customization_trace",
+                    std::string(characterCustomizationTracePatch), "{}");
+                index.addBuiltinPatch({"contains:avatarstats"}, "character_dependency_trace", std::string(characterDependenciesTracePatch), "{}");
+                index.addBuiltinPatch({"contains:SPARKS_COLLECTED"}, "character_stats_trace", std::string(characterStatsTracePatch), "{}");
+            }
+        }
         if (toyBoxShareActive())
             index.addBuiltinPatch({"presentation/toyboxselectmenu.lua"}, "toybox_share", std::string(toyBoxShareMenuPatch), "{}");
         if (settings.toyBoxLimitScale > 1)
@@ -197,6 +207,7 @@ bool installMods(HMODULE host) {
         } else {
             log("Mods: Lua value functions differ; no LiteralCrab adapters.");
         }
+        addCharacterFreedomAdapters(api);
         for (const auto& library : libraries)
             if (!readLibrary(base, library, api.library)) {
                 log("Mods: Lua %slibrary table differs at RVA 0x%X; mod loader not installed.", library.prefix, library.rva);

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // The mod runtime driven by the reference Lua 5.1.5 C API, standing in for the game's loader.
 #include "mods/lua_mods.hpp"
+#include "di1/character_freedom_data.hpp"
+#include "di1/character_freedom_policy.hpp"
 #include <windows.h>
 #include <cstdarg>
 #include <cstdio>
@@ -21,6 +23,22 @@ static int failures = 0;
 #define CHECK(condition) do { if (!(condition)) { std::printf("FAIL line %d: %s\n", __LINE__, #condition); ++failures; } } while (0)
 
 static std::string logText;
+static crabe::di1::CharacterPlaysets characterPlaysets;
+static int __cdecl registeredAvatar(lua_State* state) {
+    std::size_t size{};
+    const auto* name = lua_tolstring(state, 1, &size);
+    lua_pushboolean(state, name && characterPlaysets.registered({name, size}));
+    return 1;
+}
+static unsigned registeredPlaysets{};
+static int __cdecl registerPlayset(lua_State* state) {
+    std::size_t nameSize{}, listSize{};
+    const auto* name = lua_tolstring(state, 1, &nameSize);
+    const auto* list = lua_tolstring(state, 2, &listSize);
+    CHECK(name && list);
+    if (name && list) { characterPlaysets.add({name, nameSize}, {list, listSize}); ++registeredPlaysets; }
+    return 0;
+}
 static void capture(const char* format, ...) {
     char line[2048];
     va_list args;
@@ -264,6 +282,132 @@ int main() {
     }
 
     CHECK(lua_gettop(state) == 0);
+    // Exercise the actual built-in patch through the game loader API, including a bare data
+    // state. Membership must remain byte-for-byte native, even with an earlier mod's patch.
+    {
+        Index freedom;
+        freedom.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "character_playsets",
+            std::string(crabe::di1::characterPlaysetsPatch), "{}");
+        freedom.addBuiltinPatch({"contains:ActorList"}, "character_actor_registry",
+            std::string(crabe::di1::characterToyboxActorsPatch), "{}");
+        api.adapters.push_back({"RegisterPlaysetAvatars", &registerPlayset});
+        CHECK(configure(api, std::move(freedom), &capture, false));
+        const char* source =
+            "ZoneList={Records={PlaysetProperties={"
+            "Incredibles={PlayableAvatars='AV_MrIncredible,AV_Dash',avatarSuffix='_PS',ComboPointsMeter='MeleeMeter'},"
+            "Pirates={PlayableAvatars='PIR_JackSparrow,PIR_Barbossa',avatarSuffix='_PS'},"
+            "RumpusRoom={PlayableAvatars='Mod_ExistingAvatar',WantToyBoxFX=true},"
+            "Custom={PlayableAvatars='Mod_Character',WantToyBoxFX=false}}}}";
+        lua_State* bare = luaL_newstate();
+        // Packed/unnamed data takes the content matcher used by the real zone list.
+        CHECK(run(bare, source, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(registeredPlaysets == 3);
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.PlayableAvatars == 'AV_MrIncredible,AV_Dash'"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.PlayableAvatars == 'PIR_JackSparrow,PIR_Barbossa'"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.avatarSuffix == '_PS'"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.ComboPointsMeter == 'MeleeMeter'"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.WantToyBoxFX == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.WantToyBoxFX == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.WantBloatFX == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.WantBloatFX == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Custom.WantToyBoxFX == false"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.RumpusRoom.PlayableAvatars == 'Mod_ExistingAvatar'"));
+        CHECK(evaluate(bare, "LiteralCrab == nil and pairs == nil"));
+        CHECK(characterPlaysets.foreign("PIR_JackSparrow", "Incredibles"));
+        CHECK(!characterPlaysets.foreign("AV_MrIncredible", "Incredibles"));
+        CHECK(run(bare, source, "@GameDB/Core/ZoneList.lua") == 0);
+        lua_settop(bare, 0);
+        CHECK(registeredPlaysets == 6);
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.PlayableAvatars == 'AV_MrIncredible,AV_Dash'"));
+        // A malformed/absent table is a no-op, not a Lua error or a progression rewrite.
+        CHECK(run(bare, "ZoneList={Records={PlaysetProperties=false}}", "@zonelist.lua") == 0);
+        lua_settop(bare, 0);
+        CHECK(registeredPlaysets == 6);
+        const char* actors = "Data={Type='ActorList',Records={"
+            "{Type='Avatar',Name='PNF_Perry'},"
+            "{Type='Avatar',Name='FRO_Elsa'},"
+            "{Type='Avatar',Name='AV_MrIncredible'},"
+            "{Type='NPC',Name='StoryNPC'},"
+            "{Type='Avatar',Name=false}}}";
+        CHECK(run(bare, actors, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(registeredPlaysets == 9);
+        CHECK(characterPlaysets.foreign("PNF_Perry", "Incredibles"));
+        CHECK(characterPlaysets.foreign("FRO_Elsa", "Pirates"));
+        CHECK(!characterPlaysets.foreign("AV_MrIncredible", "Incredibles"));
+        CHECK(!characterPlaysets.foreign("StoryNPC", "Incredibles"));
+        CHECK(run(bare, "Data={Type='Unrelated',Records={{Type='Avatar',Name='ActorList'}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(registeredPlaysets == 9);
+        lua_close(bare);
+    }
+    {
+        Index preloads;
+        preloads.addBuiltinPatch({"contains:_loadforallplaysets_", "contains:avatarstats"}, "character_preloads",
+            std::string(crabe::di1::characterPreloadsPatch), "{}");
+        api.adapters.push_back({"IsRegisteredAvatar", &registeredAvatar});
+        CHECK(configure(api, std::move(preloads), &capture, false));
+        auto* bare = luaL_newstate();
+        const char* coreMap = "DataMap={Playset={_loadforallplaysets_={Files={'Screen|HUD'},Includes={'_proxyavatar|Actor'}}}}";
+        CHECK(run(bare, coreMap, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Includes == 4"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Includes[4] == 'avatartools|Include'"));
+        CHECK(run(bare, "DataMap=DataMap -- _loadforallplaysets_ repeated", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Includes == 4"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[1] == 'Screen|HUD'"));
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 9"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[3] == 'GameDB|GameDB/ToyBox/cust_Avatar__lua.lua|1|cust'"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Includes[1] == '_proxyavatar|Actor'"));
+        CHECK(run(bare, "DataMap={Playset={_loadforallplaysets_={Files={'Screen|HUD','GAMEDB|GAMEDB/CORE/CUST_AVATAR__LUA.LUA|1|CUST'}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 9"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[2] == 'GAMEDB|GAMEDB/CORE/CUST_AVATAR__LUA.LUA|1|CUST'"));
+        const char* avatarMap = "DataMap={Include={"
+            "avatarstats={Files={'GameDB|GameDB/AV_Perry/stats.lua|1|stats'}},"
+            "perry_inc={Files={'Cho|Swing','CHO|SWING','Script|Behavior'},Includes={'shared|Include'}},"
+            "shared={Files={'Cho|Shared'},Includes={'perry_inc|Include'}},"
+            "avatartools={Includes={'hat|Actor'}}},Actor={"
+            "pnf_perry={Files={'DNA|Perry','Entity|PerryModel'},Includes={'perry_inc|Include'}},"
+            "StoryNPC={Files={'Cho|NPC'}},hat={Files={'Cho|Hat','Entity|HatModel'}}}}";
+        CHECK(run(bare, avatarMap, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "#DataMap.Include.literalcrab_avatar_fx.Files == 3"));
+        CHECK(evaluate(bare, "DataMap.Actor.pnf_perry.Files[2] == 'Entity|PerryModel'"));
+        CHECK(evaluate(bare, "#DataMap.Include.avatarstats.Files == 1"));
+        CHECK(evaluate(bare, "DataMap.Include.avatartools.Includes[1] == 'hat|Actor' and DataMap.Actor.hat.Files[2] == 'Entity|HatModel'"));
+        CHECK(run(bare, "DataMap=DataMap -- avatarstats repeated", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "#DataMap.Include.literalcrab_avatar_fx.Files == 3"));
+        lua_close(bare);
+    }
+    {
+        Index diagnostics;
+        diagnostics.addBuiltinPatch({"contains:avatarstats"}, "character_dependency_trace",
+            std::string(crabe::di1::characterDependenciesTracePatch), "{}");
+        diagnostics.addBuiltinPatch({"contains:SPARKS_COLLECTED"}, "character_stats_trace",
+            std::string(crabe::di1::characterStatsTracePatch), "{}");
+        diagnostics.addBuiltinPatch({"contains:Customization"}, "character_customization_trace",
+            std::string(crabe::di1::characterCustomizationTracePatch), "{}");
+        CHECK(configure(api, std::move(diagnostics), &capture, false));
+        auto* bare = luaL_newstate();
+        CHECK(run(bare, "DataMap={Include={avatarstats={Files={'GameDB|GameDB/AV_Perry/stats.lua|1|stats'}}},"
+            "Playset={incredibles={Includes={'avatarstats|Include'}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(logText.find("DEPENDENCIES: avatarstats has 1 files") != std::string::npos);
+        CHECK(evaluate(bare, "DataMap.Include.avatarstats.Files[1] == 'GameDB|GameDB/AV_Perry/stats.lua|1|stats'"));
+        CHECK(run(bare, "Data={Records={{Name='SPARKS_COLLECTED',Package='AV_Perry',ScopeUID=117,UID=173}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(logText.find("STAT LOADED: package=AV_Perry scope=117 uid=173") != std::string::npos);
+        CHECK(evaluate(bare, "Data.Records[1].UID == 173 and Data.Records[1].ScopeUID == 117"));
+        CHECK(run(bare, "Data={Type='Customization',Databases={{DBName='Avatar',Records={Prebuilt={{name='Avatar_Buzz_Exclusive',UID=123}}}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(logText.find("AVATAR MODEL DEFINITION: Avatar_Buzz_Exclusive uid=123") != std::string::npos);
+        CHECK(evaluate(bare, "Data.Databases[1].Records.Prebuilt[1].UID == 123"));
+        lua_close(bare);
+    }
     lua_close(state);
     fs::remove_all(root);
     if (failures) return 1;

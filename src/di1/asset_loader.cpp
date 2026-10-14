@@ -31,9 +31,36 @@ namespace {
     bool trace{};
     std::atomic<unsigned> traced{};
     std::atomic<unsigned> served{};
+    std::atomic<unsigned> characterFxTraced{};
+    std::atomic<unsigned> characterToolsTraced{};
+    std::atomic<unsigned> characterProjectilesTraced{};
+
+    bool toolResource(const char* name) {
+        if (!name) return false;
+        // Models, scripts and DNA use different casing in original archives.
+        for (auto* cursor = name; *cursor; ++cursor)
+            if (!_strnicmp(cursor, "avatar_tools/", 13) || !_strnicmp(cursor, "avatar_tools\\", 13) ||
+                !_strnicmp(cursor, "pnf_perry_hat", 13) || !_strnicmp(cursor, "pixar_ball", 10)) return true;
+        return false;
+    }
 
 
     void note(const char* kind, const char* name, bool replaced) {
+        bool projectile = false;
+        if (name) for (auto* cursor = name; *cursor; ++cursor)
+            if (!_strnicmp(cursor, "pnf_perry_hat", 13) || !_strnicmp(cursor, "pixar_ball", 10)) { projectile = true; break; }
+        // Separate budget: the general tool preload can exhaust its log allowance
+        // before these projectile files arrive. Never infer missing assets from that.
+        if (config().traceCharacterFreedom && projectile &&
+            characterProjectilesTraced.fetch_add(1, std::memory_order_relaxed) < 128)
+            log("Character trace: projectile file %s %s%s", kind, name, replaced ? " <- mod" : "");
+        if (config().traceCharacterFreedom && toolResource(name) &&
+            characterToolsTraced.fetch_add(1, std::memory_order_relaxed) < 256)
+            log("Character trace: tool file %s %s%s", kind, name, replaced ? " <- mod" : "");
+        if (config().traceCharacterFreedom && name &&
+            (std::strstr(name, "choreographies/") || std::strstr(name, "Choreographies/")) &&
+            characterFxTraced.fetch_add(1, std::memory_order_relaxed) < 512)
+            log("Character trace: FX file %s %s%s", kind, name, replaced ? " <- mod" : "");
         if (!trace || traced.fetch_add(1, std::memory_order_relaxed) >= maxTraceLines) return;
         log("Engine %s %s%s", kind, name ? name : "<null>", replaced ? " <- mod" : "");
     }

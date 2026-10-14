@@ -67,7 +67,7 @@ namespace {
         crabe::di1::installPostEffectHooks(host, crabe::di1::config());
         crabe::di1::installControllerHooks(host, crabe::di1::config());
         crabe::di1::installIntroSkip(host, crabe::di1::config());
-        // Both halves or neither: the zone list half is a script patch, so it needs mods enabled.
+        // Both halves or neither: ownership/FX data needs the script loader.
         if (crabe::di1::config().charactersInAnyPlayset && !crabe::di1::config().mods)
             crabe::di1::log("Gameplay: CharactersInAnyPlayset needs [Mods] Enabled=1; nothing changed.");
         else
@@ -75,7 +75,7 @@ namespace {
         // Before the mods: its Toy Box menu entry is a script patch the mod loader adds.
         crabe::di1::installToyBoxShare(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
-        crabe::di1::installMods(host);
+        if (!crabe::di1::installMods(host)) crabe::di1::removeCharacterFreedom();
     }
 }
 extern "C" void WINAPI InitializeASI() { initialize(); }

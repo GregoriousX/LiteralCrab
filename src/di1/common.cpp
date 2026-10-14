@@ -70,6 +70,10 @@ void openLogAndConfig(HMODULE module) {
     if (limitScale >= 1 && limitScale <= 100) settings.toyBoxLimitScale = limitScale;
     else log("Invalid ToyBox LimitScale; using the game's limits.");
     settings.charactersInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"CharactersInAnyPlayset", 0, iniPath) != 0;
+    settings.traceCharacterFreedom = GetPrivateProfileIntW(L"Gameplay", L"TraceCharacterFreedom", 0, iniPath) != 0;
+    const auto experienceScale = GetPrivateProfileIntW(L"Gameplay", L"TestExperienceMultiplier", 1, iniPath);
+    if (experienceScale >= 1 && experienceScale <= 100) settings.testExperienceMultiplier = experienceScale;
+    else log("Invalid Gameplay TestExperienceMultiplier; using 1.");
     settings.skipIntro = GetPrivateProfileIntW(L"Startup", L"SkipIntro", 0, iniPath) != 0;
     settings.toyBoxShare = GetPrivateProfileIntW(L"ToyBoxes", L"Enabled", 0, iniPath) != 0;
     std::wstring servers(4096, wchar_t{});
