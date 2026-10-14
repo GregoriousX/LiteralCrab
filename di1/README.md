@@ -21,6 +21,7 @@ Diagnostics=0
 
 [Startup]
 SkipIntro=0
+LanguageSwitcher=off
 
 [PostProcessing]
 MotionBlur=1
@@ -68,6 +69,7 @@ Trace=0
 | `VSync` | `auto` | `auto` bypasses VSync when uncapped or when the cap is at least the monitor refresh rate; `on` always synchronizes; `off` always bypasses it. |
 | `Diagnostics` | `0` | Troubleshooting only. `1` writes frame-time statistics (average and worst frame, counts above 20/33/50 ms, time blocked in Present) and the game's mouse/focus state to LiteralCrab.log on each focus change and on exit. Nothing is written per frame. |
 | `[Startup]` `SkipIntro` | `0` | `1` starts without the logo movies. The game is sent down the path it already takes for logo movies that are not installed; the movie files stay untouched and the menu's attract movie and in-game cinematics still play. |
+| `[Startup]` `LanguageSwitcher` | `off` | Selects a startup language, e.g. `polish`, `italian` or `EnglishPAL`, and preserves it through Steam language detection. Recognizes all 18 PS3 locale IDs and regional aliases. `off` keeps native behavior. Additional languages require their installed PC-compatible assets and locale configuration; missing/unsupported choices retain the native language. Replaces the language pack's separate `PS3Languages.asi`. See [language list and setup](LANGUAGE_SWITCHER.en.md). |
 | `[PostProcessing]` `MotionBlur` | `1` | `0` removes the motion blur seen when the camera turns quickly, in every world. `1` keeps each world's own setting. |
 | `[PostProcessing]` `DepthOfField` | `1` | `0` removes the distance blur that some worlds and Toy Box skies use. |
 | `[PostProcessing]` `Bloom` | `1` | `0` removes the glow around bright lights, the sky and shiny surfaces. |

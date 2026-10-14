@@ -41,6 +41,8 @@ struct Config {
     unsigned testExperienceMultiplier = 1;
     // Start without the logo movies.
     bool skipIntro = false;
+    // off keeps native startup/Steam language selection. Other values name a locale.
+    std::wstring languageSwitcher = L"off";
     // Toy Box Share with the Toy Boxes of the toyboxes folder and of these servers (URLs).
     bool toyBoxShare = false;
     std::wstring toyBoxServers;

@@ -75,6 +75,9 @@ void openLogAndConfig(HMODULE module) {
     if (experienceScale >= 1 && experienceScale <= 100) settings.testExperienceMultiplier = experienceScale;
     else log("Invalid Gameplay TestExperienceMultiplier; using 1.");
     settings.skipIntro = GetPrivateProfileIntW(L"Startup", L"SkipIntro", 0, iniPath) != 0;
+    wchar_t language[128]{};
+    GetPrivateProfileStringW(L"Startup", L"LanguageSwitcher", L"off", language, static_cast<DWORD>(std::size(language)), iniPath);
+    settings.languageSwitcher = language;
     settings.toyBoxShare = GetPrivateProfileIntW(L"ToyBoxes", L"Enabled", 0, iniPath) != 0;
     std::wstring servers(4096, wchar_t{});
     servers.resize(GetPrivateProfileStringW(L"ToyBoxes", L"Servers", L"", servers.data(), 4096, iniPath));

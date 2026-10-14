@@ -4,6 +4,8 @@
 #include "di1/common.hpp"
 #include "di1/controller.hpp"
 #include "di1/intro.hpp"
+#include "di1/language_switcher.hpp"
+#include "mods/file_redirect.hpp"
 #include "di1/display.hpp"
 #include "di1/engine.hpp"
 #include "di1/mods.hpp"
@@ -76,6 +78,8 @@ namespace {
         crabe::di1::installToyBoxShare(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
         if (!crabe::di1::installMods(host)) crabe::di1::removeCharacterFreedom();
+        // The resolved asset index exists now; locale/audio startup has not run yet.
+        crabe::di1::installLanguageSwitcher(host, crabe::di1::config(), &crabe::mods::readAssetMember);
     }
 }
 extern "C" void WINAPI InitializeASI() { initialize(); }
