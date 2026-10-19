@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace crabe::di1 {
 namespace {
@@ -65,12 +66,11 @@ namespace {
         log("Engine %s %s%s", kind, name ? name : "<null>", replaced ? " <- mod" : "");
     }
 
-    void complete(void* status, void* data, unsigned bytes) {
+    void prepareCompletion(void* status, void* data, unsigned bytes) {
         auto* fields = static_cast<unsigned char*>(status);
         *reinterpret_cast<void**>(fields + statusData) = data;
         *reinterpret_cast<unsigned*>(fields + statusBytes) = bytes;
         *reinterpret_cast<unsigned*>(fields + statusError) = 0;
-        signal(status);
     }
 
     // SEH-guarded halves: locals stay trivially destructible.
@@ -79,25 +79,32 @@ namespace {
             const std::size_t available = offset <= data.size() ? data.size() - offset : 0;
             const auto count = static_cast<unsigned>(available < size ? available : size);
             std::memcpy(dest, data.data() + (offset <= data.size() ? offset : data.size()), count);
-            complete(status, dest, count);
-            return true;
+            prepareCompletion(status, dest, count);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
         }
+        // Once completion is published the waiting thread may retire the
+        // request. A native signal exception must escape unchanged, never retry
+        // the original loader using that completed request and filename.
+        signal(status);
+        return true;
     }
     bool serveAlloc(const std::string& data, void** out, unsigned extra, bool flag, void* heap, void* status) noexcept {
         __try {
+            if (data.size() > std::numeric_limits<unsigned>::max() ||
+                extra > std::numeric_limits<unsigned>::max() - data.size()) return false;
             const auto size = static_cast<unsigned>(data.size());
             void* buffer = allocate(size + extra, !flag, nullptr, heap);
             if (!buffer) return false;
             std::memcpy(buffer, data.data(), size);
             if (extra) std::memset(static_cast<char*>(buffer) + size, 0, extra);
             *out = buffer;
-            complete(status, buffer, size + extra);
-            return true;
+            prepareCompletion(status, buffer, size + extra);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
         }
+        signal(status);
+        return true;
     }
 
     bool provide(const char* name, std::string& data) {
@@ -156,11 +163,15 @@ bool installAssetLoader(HMODULE host, AssetProvider assets, bool traceRequests) 
     signal = reinterpret_cast<SignalFn>(base + signalRva);
     allocate = reinterpret_cast<AllocateFn>(base + allocateRva);
     void* targets[] = {reinterpret_cast<void*>(base + loadRva), reinterpret_cast<void*>(base + loadAndAllocRva)};
-    bool ok = MH_CreateHook(targets[0], reinterpret_cast<void*>(&hookLoad), reinterpret_cast<void**>(&originalLoad)) == MH_OK &&
-        MH_CreateHook(targets[1], reinterpret_cast<void*>(&hookLoadAndAlloc), reinterpret_cast<void**>(&originalLoadAndAlloc)) == MH_OK &&
-        MH_EnableHook(targets[0]) == MH_OK && MH_EnableHook(targets[1]) == MH_OK;
+    const bool loadCreated = MH_CreateHook(targets[0], reinterpret_cast<void*>(&hookLoad), reinterpret_cast<void**>(&originalLoad)) == MH_OK;
+    const bool allocCreated = loadCreated &&
+        MH_CreateHook(targets[1], reinterpret_cast<void*>(&hookLoadAndAlloc), reinterpret_cast<void**>(&originalLoadAndAlloc)) == MH_OK;
+    const bool ok = loadCreated && allocCreated && MH_EnableHook(targets[0]) == MH_OK && MH_EnableHook(targets[1]) == MH_OK;
     if (!ok) {
-        for (const auto target : targets) { MH_DisableHook(target); MH_RemoveHook(target); }
+        // MinHook can refuse a hook that another module created but has not yet
+        // enabled. Its native bytes still pass the profile. Roll back only ours.
+        if (allocCreated) { MH_DisableHook(targets[1]); MH_RemoveHook(targets[1]); }
+        if (loadCreated) { MH_DisableHook(targets[0]); MH_RemoveHook(targets[0]); }
         log("Mods: file loader hook refused.");
         return false;
     }
