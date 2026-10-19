@@ -8,9 +8,17 @@
 #include <cstring>
 #include <cstdlib>
 #include <vector>
+#include <cstdarg>
+#include <string>
 
 namespace {
 int failures{};
+std::vector<std::string> messages;
+void __cdecl traceLog(const char* format,...) {
+    char line[2048]{}; va_list args; va_start(args,format);
+    std::vsnprintf(line,sizeof(line),format,args); va_end(args);
+    messages.emplace_back(line); SetLastError(0x76543210);
+}
 #define CHECK(condition) do { if (!(condition)) { std::printf("FAIL %d: %s\n", __LINE__, #condition); ++failures; } } while (0)
 constexpr unsigned gate = 0xB551B7, accepted = 0xB551E0;
 struct Signature { unsigned rva; const char* bytes; };
@@ -87,6 +95,10 @@ bool protect(void* memory, DWORD mode) { DWORD old{}; return VirtualProtect(memo
 }
 int wmain(int argc, wchar_t** argv) {
     CHECK(MH_Initialize() == MH_OK);
+    void* loggerOriginal{};
+    void* logger=reinterpret_cast<void*>(&crabe::di1::log);
+    CHECK(MH_CreateHook(logger,reinterpret_cast<void*>(&traceLog),&loggerOriginal)==MH_OK);
+    CHECK(MH_EnableHook(logger)==MH_OK);
     // Exercise the optional diagnostic path and calls after its 96-event budget.
     // config() exposes a const view of the mutable settings owned by common.cpp.
     auto& options = const_cast<crabe::di1::Config&>(crabe::di1::config());
@@ -110,6 +122,10 @@ int wmain(int argc, wchar_t** argv) {
     // owned records. Only the native accept/reject continuation is a stand-in.
     put(image + accepted, "B8 01 00 00 00 C3");
     put(image + 0xB555EC, "31 C0 C3");
+    auto* control=static_cast<unsigned char*>(VirtualAlloc(nullptr,size,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE));
+    if (!control) return 1;
+    std::memcpy(control,baseline.data(),size);
+    put(control+accepted,"B8 01 00 00 00 C3"); put(control+0xB555EC,"31 C0 C3");
     auto* data = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
     auto* message = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
     if (!data || !message) return 1;
@@ -135,6 +151,51 @@ int wmain(int argc, wchar_t** argv) {
             CHECK(afterEsi == reinterpret_cast<unsigned>(message) && afterEdi == reinterpret_cast<unsigned>(data));
         }
         CHECK(!std::memcmp(savedData.data(), data, 4096)); CHECK(!std::memcmp(savedMessage.data(), message, 4096));
+    }
+    CHECK(messages.size()==97 && messages.back().find("marked target impact budget exhausted")!=std::string::npos);
+    messages.clear();
+    // Unmarked crate traces have a separate budget and never alter the native
+    // inclusion/exclusion truth table, registers, flags, FP state or records.
+    for (const bool ignore : {false,true}) for (const bool listed : {false,true}) {
+        reset(); set(data,0x28,fourcc("blas")); set(data,0x2C,0); data[0xCF]=ignore;
+        set(message,0x58,fourcc(listed ? "blas":"xxxx"));
+        set(message,0x04,0x12340001); set(message,0x38,0x12340002);
+        const float damage=1.5f; std::memcpy(message+0x50,&damage,sizeof(damage));
+        std::array<unsigned char,4096> savedData{},savedMessage{};
+        std::memcpy(savedData.data(),data,4096); std::memcpy(savedMessage.data(),message,4096);
+        CHECK(protect(data,PAGE_READONLY) && protect(message,PAGE_READONLY));
+        const auto expected=invoke(control+gate,data,message);
+        const auto flags=afterFlags,ecx=afterEcx,edx=afterEdx,ebx=afterEbx;
+        std::array<unsigned char,512> fp{}; std::memcpy(fp.data(),afterFp,512);
+        SetLastError(0xBAD01234);
+        CHECK(invoke(image+gate,data,message)==expected && expected==unsigned(listed!=ignore));
+        CHECK(GetLastError()==0xBAD01234 && afterFlags==flags && afterEcx==ecx && afterEdx==edx && afterEbx==ebx);
+        CHECK(!std::memcmp(fp.data(),afterFp,512) && afterEsi==reinterpret_cast<unsigned>(message) && afterEdi==reinterpret_cast<unsigned>(data));
+        CHECK(!std::memcmp(savedData.data(),data,4096) && !std::memcmp(savedMessage.data(),message,4096));
+        CHECK(messages.back().find("unmarked Exploder impact")!=std::string::npos);
+        CHECK(messages.back().find("target=12340002 owner=12340001")!=std::string::npos);
+        CHECK(messages.back().find(listed!=ignore ? "nativeListAccept=1":"nativeListAccept=0")!=std::string::npos);
+    }
+    for (unsigned i=0; i<130; ++i) {
+        SetLastError(0xBAD01234); CHECK(invoke(image+gate,data,message)==0 && GetLastError()==0xBAD01234);
+    }
+    CHECK(messages.size()==97 && messages.back().find("unmarked impact traces suppressed")!=std::string::npos);
+    // Optional diagnostic fields may be inaccessible even when the measured
+    // native gate can read its weapon field. Failed observation must stay passive.
+    crabe::di1::removeCharacterTargets();
+    std::memcpy(image+accepted,baseline.data()+accepted,6);
+    CHECK(crabe::di1::installCharacterTargets(reinterpret_cast<std::uintptr_t>(image)));
+    put(image+accepted,"B8 01 00 00 00 C3");
+    auto* boundary=static_cast<unsigned char*>(VirtualAlloc(nullptr,8192,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+    CHECK(boundary!=nullptr);
+    if (boundary) {
+        auto* shortMessage=boundary+4096-0x58;
+        set(shortMessage,0x58,fourcc("blas")); CHECK(protect(boundary,PAGE_NOACCESS));
+        reset(); set(data,0x28,fourcc("blas")); set(data,0x2C,0);
+        const auto before=messages.size(); SetLastError(0xBAD01234);
+        CHECK(invoke(image+gate,data,shortMessage)==1 && GetLastError()==0xBAD01234);
+        CHECK(messages.size()==before);
+        VirtualFree(boundary,0,MEM_RELEASE);
     }
     for (const char* tag : {"bbls", "lrcb", "lrgb", "xxxx"}) {
         reset(); set(message, 0x58, fourcc(tag)); CHECK(invoke(image + gate, data, message) == 0);
@@ -162,6 +223,7 @@ int wmain(int argc, wchar_t** argv) {
     std::memcpy(image + 0xB555EC, baseline.data() + 0xB555EC, 3);
     CHECK(!std::memcmp(image, baseline.data(), size));
     VirtualFree(data, 0, MEM_RELEASE); VirtualFree(message, 0, MEM_RELEASE); VirtualFree(image, 0, MEM_RELEASE);
+    VirtualFree(control,0,MEM_RELEASE);
     if (argc > 1) {
         HMODULE original = LoadLibraryExW(argv[1], nullptr, DONT_RESOLVE_DLL_REFERENCES);
         CHECK(original != nullptr);
@@ -174,6 +236,7 @@ int wmain(int argc, wchar_t** argv) {
             FreeLibrary(original);
         }
     }
+    CHECK(MH_DisableHook(logger)==MH_OK && MH_RemoveHook(logger)==MH_OK);
     CHECK(MH_Uninitialize() == MH_OK);
     options.traceCharacterFreedom = previousTrace;
     std::printf("Native target gate/ABI/read-only/rollback: %s\n", failures ? "FAILED" : "passed");

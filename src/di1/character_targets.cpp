@@ -8,7 +8,7 @@ namespace {
 constexpr unsigned gateRva = 0xB551B7, acceptedRva = 0xB551E0;
 std::uintptr_t installedBase{}, nativeAccepted{};
 void* originalGate{};
-volatile LONG impactTraceCount{};
+volatile LONG impactTraceCount{}, exploderTraceCount{};
 constexpr unsigned tag(const char (&value)[5]) {
     return unsigned(value[0]) | (unsigned(value[1]) << 8) | (unsigned(value[2]) << 16) | (unsigned(value[3]) << 24);
 }
@@ -18,19 +18,51 @@ constexpr unsigned allowedWeapons[] = {tag("apxb"), tag("bpxb"), tag("blas"), ta
     // These personal tools create scripted physics actors rather than entries in
     // weapons.lua: FlintLock.sx uses flnt, TB_FlamingPumpkin.sx uses pmpk.
     tag("flnt"), tag("pmpk")};
+void traceUnmarkedImpact(const unsigned char* data, const unsigned char* message,
+    unsigned entries, bool ignoreList) noexcept {
+    const auto lastError = GetLastError();
+    __try {
+        const auto count = InterlockedIncrement(&exploderTraceCount);
+        if (count <= 96) {
+            const auto weapon = *reinterpret_cast<const unsigned*>(message + 0x58);
+            bool listed{};
+            for (unsigned index=0; index<entries; ++index)
+                listed |= *reinterpret_cast<const unsigned*>(data + 0x28 + index*4) == weapon;
+            // Native BoxBody::DoDamage writes the affected actor at +38 and
+            // MunitionSystem::SendMunitionImpact writes the owning actor at +04.
+            // ExploderData::MunitionImpact consumes +50 as damage and +58 as
+            // FourCC. These optional observations never decide acceptance.
+            const auto target = *reinterpret_cast<const unsigned*>(message + 0x38);
+            const auto owner = *reinterpret_cast<const unsigned*>(message + 0x04);
+            const auto damage = *reinterpret_cast<const float*>(message + 0x50);
+            log("Character trace: unmarked Exploder impact data=%p target=%08X owner=%08X weapon=%08X damage=%.3g listEntries=%u listed=%d ignoreList=%d nativeListAccept=%d (native handling retained)",
+                data, target, owner, weapon, static_cast<double>(damage), entries, listed, ignoreList, listed != ignoreList);
+        }
+        if (count == 96)
+            log("Character trace: unmarked Exploder impact budget exhausted (96 events); further unmarked impact traces suppressed");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    SetLastError(lastError);
+}
 bool __cdecl extendedImpact(const unsigned char* data, const unsigned char* message) noexcept {
     if (!data || !message) return false;
     __try {
-        if (!(data[0xCC] & 0x80) || (data[0xCF] & 1)) return false;
+        if (!(data[0xCC] & 0x80)) return false;
+        const bool ignoreList = (data[0xCF] & 1) != 0;
+        const bool trace=config().traceCharacterFreedom;
+        if (ignoreList && !trace) return false;
         bool marked{}, pistol{}, tomahawk{};
+        unsigned entries{};
         for (unsigned index = 0; index != 8; ++index) {
             const auto value = *reinterpret_cast<const unsigned*>(data + 0x28 + 4 * index);
             if (!value) break;
+            ++entries;
             marked |= value == markerTag;
             pistol |= value == pistolTag;
             tomahawk |= value == tomahawkTag;
         }
-        if (!marked || !pistol || !tomahawk) return false;
+        if (!marked && trace)
+            traceUnmarkedImpact(data, message, entries, ignoreList);
+        if (ignoreList || !marked || !pistol || !tomahawk) return false;
         const auto weapon = *reinterpret_cast<const unsigned*>(message + 0x58);
         bool extended{};
         for (const auto allowed : allowedWeapons)
@@ -99,6 +131,7 @@ bool installCharacterTargets(std::uintptr_t base) {
     }
     installedBase = base;
     impactTraceCount = 0;
+    exploderTraceCount = 0;
     return true;
 }
 void removeCharacterTargets() noexcept {
