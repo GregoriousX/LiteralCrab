@@ -9,6 +9,7 @@
 #include "di1/common.hpp"
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 namespace crabe::di1 {
 namespace {
@@ -39,7 +40,26 @@ namespace {
     UnawardFn unaward{};
     QueryFn isUnlocked{}, isAwarded{};
 
-    bool toolsResolved() {
+    bool jumpTo(std::uintptr_t from, const void* to) noexcept {
+        __try {
+            return *reinterpret_cast<const unsigned char*>(from) == 0xE9 &&
+                from + 5 + *reinterpret_cast<const std::int32_t*>(from + 1) == reinterpret_cast<std::uintptr_t>(to);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    bool toolQueryResolved(ToolQueryHook hook) {
+        constexpr auto prefix = "8B 44 24 04 53"; // Two complete native instructions, five bytes.
+        const auto entry = base + unlockedRva;
+        if (codeMatches(entry, prefix)) return true;
+        // CharactersInAnyPlayset installs this query hook before script adapters
+        // are resolved. Accept only its exact owned detour and MinHook trampoline,
+        // including the original five bytes and jump back to the unchanged body.
+        const auto trampoline = reinterpret_cast<std::uintptr_t>(hook.trampoline);
+        return hook.detour && trampoline && jumpTo(entry, hook.detour) &&
+            codeMatches(trampoline, prefix) && jumpTo(trampoline + 5, reinterpret_cast<const void*>(entry + 5));
+    }
+
+    bool toolsResolved(ToolQueryHook hook) {
         if (!codeMatches(base + avatarNativeRva, "53 8B 5C 24 08 56 57 8B CB E8 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 8B F0 8B F9 85 F6 78 22 E8") ||
             !codeMatches(base + avatarNativeRva + 0x25, "8B 87 E8 00 00 00 C1 E6 06 8B 74 30 38") ||
             !callsTo(base, 0xADD37C, playerCountRva) || !codeMatches(base + playerCountRva, "E9") ||
@@ -50,7 +70,8 @@ namespace {
             !codeMatches(base + 0xC1F6F0, "8B 44 24 04 8B 49 20 6A 00 6A 00 50 E8") || !callsTo(base, 0xC1F6FC, awardRva) ||
             !codeMatches(base + 0xC1F6D0, "8B 44 24 04 8B 49 20 6A 00 6A 01 50 E8") || !callsTo(base, 0xC1F6DC, awardRva) ||
             !codeMatches(base + unawardRva, "51 8B 44 24 08 55 57 8B F9 8B 0D ?? ?? ?? ?? 50 E8") || !callsTo(base, 0xC1F718, unawardRva) ||
-            !codeMatches(base + unlockedRva, "8B 44 24 04 53 55 56 57 8B F9 8B 0D ?? ?? ?? ?? 50 E8") || !callsTo(base, 0x5FFBEB, unlockedRva) ||
+            !toolQueryResolved(hook) ||
+            !codeMatches(base + unlockedRva + 5, "55 56 57 8B F9 8B 0D ?? ?? ?? ?? 50 E8") || !callsTo(base, 0x5FFBEB, unlockedRva) ||
             !codeMatches(base + awardedRva, "8B 44 24 04 53 55 56 57 8B F9 8B 0D ?? ?? ?? ?? 50 E8") || !callsTo(base, 0xC1A6AC, 0xC19E10))
             return false;
         // Absolute operands are relocated with the game, so they are read, not assumed.
@@ -87,7 +108,7 @@ namespace {
     bool arguments(lua_State* state, int& player, char (&name)[maxToolName]) noexcept {
         if (lua.type(state, 1) != 3 || lua.type(state, 2) != 4) return false;  // LUA_TNUMBER, LUA_TSTRING
         const double number = lua.toNumber(state, 1);
-        if (number < 0 || number > 7 || number != static_cast<int>(number)) return false;
+        if (!std::isfinite(number) || number < 0 || number > 7 || number != static_cast<int>(number)) return false;
         std::size_t length{};
         const char* text = lua.toLString(state, 2, &length);
         if (!text || !length || length >= maxToolName) return false;
@@ -216,7 +237,7 @@ namespace {
     bool idArgument(lua_State* state, int index, std::uint32_t& id) noexcept {
         if (lua.type(state, index) != 3) return false;
         const double number = lua.toNumber(state, index);
-        if (number < 1 || number > 99999999 || number != static_cast<std::uint32_t>(number)) return false;
+        if (!std::isfinite(number) || number < 1 || number > 99999999 || number != static_cast<std::uint32_t>(number)) return false;
         id = static_cast<std::uint32_t>(number);
         return true;
     }
@@ -277,20 +298,57 @@ namespace {
         return result(state, discArgument(state, 1, disc) && discPlaced(disc));
     }
 
+    // AddTag's verified initializer stores its antenna argument at record+0x14.
+    // This extra layout check is independent of the existing disc adapters.
+    bool discOwnerResolved() {
+        return codeMatches(base + 0x7E370,
+            "8B 44 24 04 80 89 5C 01 00 00 02 8B 54 24 08 89 41 08 8B 44 24 10 89 41 14 89 51 0C") &&
+            codeMatches(base + 0x7E630,
+            "52 E8 CA FF FF FF 39 70 08 75 05 39 78 0C 74 08 42 83 FA 0C 72 EA 33 C0 5F 5E 5B C2 08 00") &&
+            callsTo(base, 0x87826, 0x7E370);
+    }
+
+    // Actual placed tag ownership, independent of Lua/menu lifetime and delayed
+    // avatar effects. 0/1: player; -1: valid round disc absent; -2: unknown/error.
+    int __cdecl getDiscOwner(lua_State* state) {
+        int owner = -2;
+        std::uint32_t disc{};
+        if (discArgument(state, 1, disc)) {
+            __try {
+                void* reader = *gateway;
+                if (reader) {
+                    const auto* tag = static_cast<const std::uint8_t*>(findTag(reader, disc, 0));
+                    if (!tag) owner = -1;
+                    else if (readable(tag, 0x18)) {
+                        std::uint32_t low{}, high{}, antenna{};
+                        std::memcpy(&low, tag + 8, sizeof(low));
+                        std::memcpy(&high, tag + 0xC, sizeof(high));
+                        std::memcpy(&antenna, tag + 0x14, sizeof(antenna));
+                        if (low == disc && high == 0 && antenna <= 1) owner = static_cast<int>(antenna);
+                    }
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                log("Adapter GetDiscOwner: native fault 0x%08lX for %u.", GetExceptionCode(), disc);
+            }
+        }
+        lua.pushNumber(state, owner);
+        return 1;
+    }
+
     // LiteralCrab.HasToolSet(player) -> the player currently has an avatar with tools.
     int __cdecl hasToolSet(lua_State* state) {
         if (lua.type(state, 1) != 3) return result(state, false);
         const double number = lua.toNumber(state, 1);
-        return result(state, number >= 0 && number <= 7 && number == static_cast<int>(number) && toolSet(static_cast<int>(number)));
+        return result(state, std::isfinite(number) && number >= 0 && number <= 7 && number == static_cast<int>(number) && toolSet(static_cast<int>(number)));
     }
 }
 
-std::vector<mods::LibraryFunction> resolveAdapters(HMODULE host, const mods::LuaApi& api) {
+std::vector<mods::LibraryFunction> resolveAdapters(HMODULE host, const mods::LuaApi& api, ToolQueryHook toolQuery) {
     std::vector<mods::LibraryFunction> adapters;
     if (!api.toNumber || !api.toBoolean || !api.pushBoolean || !api.type || !api.toLString) return adapters;
     lua = api;
     base = reinterpret_cast<std::uintptr_t>(host);
-    if (toolsResolved()) {
+    if (toolsResolved(toolQuery)) {
         adapters.push_back({"AwardTool", &awardTool});
         adapters.push_back({"UnAwardTool", &unawardTool});
         adapters.push_back({"IsToolAwarded", &isToolAwarded});
@@ -306,6 +364,12 @@ std::vector<mods::LibraryFunction> resolveAdapters(HMODULE host, const mods::Lua
         adapters.push_back({"IsDiscPlaced", &isDiscPlaced});
         if (api.pushNumber) adapters.push_back({"TagCategory", &tagCategoryOf});
         log("Mods: adapters available to patches: PlaceDisc, RemoveDisc, IsDiscPlaced, TagCategory.");
+        if (api.pushNumber && discOwnerResolved()) {
+            adapters.push_back({"GetDiscOwner", &getDiscOwner});
+            log("Mods: read-only disc ownership adapter available: GetDiscOwner.");
+        } else {
+            log("Mods: tag owner layout differs or numeric results unavailable; GetDiscOwner unavailable, existing disc adapters retained.");
+        }
     } else {
         log("Mods: virtual reader signatures differ; LiteralCrab.PlaceDisc is unavailable.");
     }

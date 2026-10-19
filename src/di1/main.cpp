@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "di1/camera.hpp"
 #include "di1/character_freedom.hpp"
+#include "di1/character_targets.hpp"
 #include "di1/common.hpp"
 #include "di1/controller.hpp"
+#include "di1/diagnostics.hpp"
+#include "di1/auto_capture.hpp"
 #include "di1/intro.hpp"
 #include "di1/language_switcher.hpp"
 #include "mods/file_redirect.hpp"
@@ -61,8 +64,15 @@ namespace {
         }
         // The hooks outlive initialization. Pin the ASI so a loader cannot unload live detours.
         HMODULE pinned{};
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(&initialize), &pinned);
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            reinterpret_cast<LPCWSTR>(&initialize), &pinned)) {
+            crabe::di1::installDiagnostics(host, self, crabe::di1::pluginDirectory(), crabe::di1::config().exceptionDiagnostics);
+            if (crabe::di1::config().crashReports) {
+                crabe::di1::armAutomaticCapture(self, crabe::di1::pluginDirectory());
+                crabe::di1::setGraphicsStartupObserver(&crabe::di1::startAutomaticCapture);
+            }
+        }
+        else crabe::di1::log("Diagnostics: observer disabled because the ASI could not be pinned.");
         crabe::di1::log("READY: DI1 display hooks installed before engine startup.");
         // Optional and independent: only installed when LiteralCrab.ini sets a camera option.
         crabe::di1::installCameraHooks(host, crabe::di1::config());
@@ -77,7 +87,10 @@ namespace {
         // Before the mods: its Toy Box menu entry is a script patch the mod loader adds.
         crabe::di1::installToyBoxShare(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
-        if (!crabe::di1::installMods(host)) crabe::di1::removeCharacterFreedom();
+        if (!crabe::di1::installMods(host)) {
+            crabe::di1::removeCharacterTargets();
+            crabe::di1::removeCharacterFreedom();
+        }
         // The resolved asset index exists now; locale/audio startup has not run yet.
         crabe::di1::installLanguageSwitcher(host, crabe::di1::config(), &crabe::mods::readAssetMember);
     }

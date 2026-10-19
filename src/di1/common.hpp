@@ -21,6 +21,8 @@ struct Config {
     unsigned frameLimit = 120;
     VSync vsync = VSync::Auto;
     bool diagnostics = false;
+    bool exceptionDiagnostics = true;
+    bool crashReports = true;
     bool mods = true;
     bool modTrace = false;
     // Seconds before the camera returns behind the character after the player moves it;

@@ -22,6 +22,7 @@
 // ownership map selects the Toy Box actor for visitors and keeps the native actor at home.
 // The zone patch enables Toy Box FX resources for tools brought into play sets.
 #include "di1/character_freedom.hpp"
+#include "di1/adapters.hpp"
 #include "di1/character_freedom_policy.hpp"
 #include "di1/character_freedom_data.hpp"
 #include "di1/character_particles.hpp"
@@ -141,6 +142,17 @@ namespace {
         __try { return actor ? *reinterpret_cast<const std::uint32_t*>(static_cast<const unsigned char*>(actor) + 4) : 0; }
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
     }
+    bool personalTool(const unsigned char* entry) noexcept {
+        // GetTool resolves these values for the owning avatar from toolset.bin:
+        // +20 is the upgrade prerequisite; +5C is the final per-avatar bool.
+        // Innate overrides (e.g. Pixar Ball for Buzz/Woody/Jessie) have no
+        // prerequisite and resolve that bool to false. Shared shop tools retain
+        // true, including tools with no prerequisite such as goo fruit. Hidden
+        // ability records also use false, so their dependent actions keep working.
+        // Never use the unlocked/awarded bits alone to waive a world restriction.
+        return entry && !*reinterpret_cast<const void* const*>(entry + 0x20) &&
+            *reinterpret_cast<const unsigned*>(entry + 0x5C) == 0;
+    }
     void* zoneBlockedTool(void* tools, const char* name) noexcept {
         if (!tools || !name) return nullptr;
         __try {
@@ -150,7 +162,7 @@ namespace {
             if (!entries || count > 512) return nullptr;
             for (unsigned i = 0; i < count; ++i) {
                 auto* entry = static_cast<unsigned char*>(entries[i]);
-                if (!entry || (entry[0x78] & 5) ||
+                if (!entry || !personalTool(entry) || (entry[0x78] & 5) ||
                     !*reinterpret_cast<const void* const*>(entry + 0x24) ||
                     *reinterpret_cast<const int*>(entry + 0x70) != 0) continue;
                 const auto* toolName = *reinterpret_cast<const char* const*>(entry + 0x14);
@@ -176,7 +188,8 @@ namespace {
             if (void* entry = zoneBlockedTool(self, name)) {
                 // Initial inventory construction can precede player registration.
                 // Re-run the engine's GetTool(false) checks after that registration;
-                // its unlock/upgrade checks still decide whether the tool is usable.
+                // its unlock/upgrade checks still decide whether the personal tool
+                // is usable. Shared Toy Box/shop tools retain native world filters.
                 refreshingToolAvailability = true;
                 refreshTool(entry, false);
                 refreshingToolAvailability = false;
@@ -271,7 +284,7 @@ namespace {
         std::uint32_t actor{};
         __try {
             const auto* memory = static_cast<const unsigned char*>(self);
-            if ((memory[0x78] & 5) != 4) return result; // Keep locked and suppressed equipment unavailable.
+            if (!personalTool(memory) || (memory[0x78] & 5) != 4) return result;
             auto* tools = *static_cast<void**>(self);
             // The native caller checks upgrade/unlock state before this zone filter.
             // Do not change the cached native result, award bits, rules or suppression.
@@ -280,7 +293,7 @@ namespace {
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         if (!playerInPlayset(actor)) return result;
         if (trace && InterlockedIncrement(&toolFreedomEvents) <= 64)
-            log("Character freedom: unlocked player tool allowed across playset zone filter actor=%08X", actor);
+            log("Character freedom: personal player tool allowed across playset zone filter actor=%08X", actor);
         return 1;
     }
     mods::LuaApi lua{};
@@ -669,6 +682,11 @@ namespace {
             !callsTo(base, 0x5FFBEB, toolUnlockedRva) ||
             !codeMatches(base + 0xC1A64C, "8A 41 78 5F 5E C0 E8 02 5D 24 01 5B C2 04 00") ||
             !codeMatches(base + 0xC1E280, "6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 0C") ||
+            // Verify the resolved prerequisite and per-avatar classification layout.
+            !codeMatches(base + 0xC1E36F, "89 46 20 8B 57 10 89 56 24") ||
+            !codeMatches(base + 0xC1E426, "8B 4F 48 8B 06 8B 40 04 51 8B 0D ?? ?? ?? ?? 50 E8") ||
+            !callsTo(base, 0xC1E436, 0xB70830) ||
+            !codeMatches(base + 0xC1E43B, "0F B6 D0 89 56 5C") ||
             !callsTo(base, 0xC1E6A0, 0xC1E280) || !codeMatches(base + 0xC1E631, "C2 04 00")) return false;
         players = *reinterpret_cast<void***>(base + 0x759D6A);
         if (!readable(players, sizeof(void*))) return false;
@@ -874,6 +892,11 @@ bool installCharacterFreedom(HMODULE host, const Config& options) {
 }
 
 bool characterFreedomActive() noexcept { return active; }
+
+ToolQueryHook characterToolQueryHook() noexcept {
+    if (!active || !toolUnlockedInstalled || !originalToolUnlocked) return {};
+    return {reinterpret_cast<const void*>(originalToolUnlocked), reinterpret_cast<const void*>(&allowToolUnlocked)};
+}
 
 void addCharacterFreedomAdapters(mods::LuaApi& api) {
     if (!active) return;

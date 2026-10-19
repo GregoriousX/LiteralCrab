@@ -3,6 +3,115 @@
 #include <string_view>
 
 namespace crabe::di1 {
+inline constexpr std::string_view characterTargetsPatch = R"lua(
+local _, options, log = ...
+local gadgets = type(DNA) == "table" and DNA.AgentGadgets
+if type(gadgets) ~= "table" then return end
+local exploder, effects = gadgets.Exploder, gadgets.Effects
+if type(exploder) ~= "table" or type(exploder.WeaponList) ~= "string" or
+    exploder.IgnoreWeaponList ~= false or exploder.ExplodeOnMunitionImpact ~= true or
+    type(effects) ~= "table" or type(effects.FX) ~= "table" then return end
+local target = false
+for _, fx in pairs(effects.FX) do
+    if type(fx) == "table" and fx.Type == "SOUND" and fx.Event == "ExploderExplode" and
+        fx.Name == "target_bullseye" then target = true end
+end
+if not target then return end
+-- gmatch skips empty fields, while the native parser can consume them. Reject
+-- malformed separators/NULs before counting slots or appending anything.
+local list = exploder.WeaponList
+if string.sub(list, 1, 1) == "|" or string.sub(list, -1) == "|" or
+    string.find(list, "||", 1, true) or string.find(list, "\000", 1, true) then return end
+local known = {}
+for weapon in string.gmatch(exploder.WeaponList, "[^|]+") do known[weapon] = true end
+-- Ordinary LR pistol/tomahawk targets only. Cannon and Gatling puzzles retain
+-- their native lists; keep native collision, destruction, rewards and scoring.
+if not known.pstl or not known.toma then return end
+-- ExploderData has eight FourCC slots. The native parser does not bounds-check
+-- writes: never append the entire projectile set to this string. A marker enables
+-- the verified native impact gate, which preserves the original message/data.
+if known.lctg then return end
+local count = 0
+for weapon in string.gmatch(exploder.WeaponList, "[^|]+") do
+    if #weapon ~= 4 then return end
+    count = count + 1
+end
+if count >= 8 then
+    log("SKIPPED: ordinary target has no free native weapon slot")
+    return
+end
+exploder.WeaponList = exploder.WeaponList .. "|lctg"
+log("APPLIED: ordinary Lone Ranger targets use bounded native projectile gate; native scoring retained")
+)lua";
+inline constexpr std::string_view characterMountsPatch = R"lua(
+local _, options, log = ...
+local gadgets = type(DNA) == "table" and DNA.AgentGadgets
+if type(gadgets) ~= "table" or type(gadgets.Avatar) ~= "table" or
+    type(gadgets.Rider) ~= "table" or type(gadgets.Identification) ~= "table" then return end
+local name = gadgets.Identification.ActorTypeMask
+if not LiteralCrab.has("IsRegisteredAvatar") then return end
+if type(name) ~= "string" or not LiteralCrab.IsRegisteredAvatar(name) then
+    -- Identification masks and actor creation keys differ for several families
+    -- (AV_Perry vs PNF_Perry, AV_LoneRanger vs LR_LoneRanger, etc.).
+    name = gadgets.Identification.Name
+    if type(name) ~= "string" or not LiteralCrab.IsRegisteredAvatar(name) then return end
+end
+-- Toy Box avatar DNA omits SummonMount. Keep the avatar's model/movement DNA
+-- and add only the native, lock-checked hitching-post definitions.
+if gadgets.SummonMount ~= nil and type(gadgets.SummonMount) ~= "table" then return end
+local summon = gadgets.SummonMount or {}
+if summon.TypedMounts ~= nil and type(summon.TypedMounts) ~= "table" then return end
+local typed = summon.TypedMounts or {}
+local defaults = {
+    LR_HitchingPost = {
+        {CreationKey = "LR_Silver", Lock = "RC_TOY_LR_Silver"},
+        {CreationKey = "LR_Scout", Lock = "RC_LR_Scout"}
+    },
+    LR_MuleHitchingPost = {{CreationKey = "LR_Mule", Lock = "RC_LR_Mule"}},
+    LR_ElephantHitchingPost = {{CreationKey = "LR_Elephant", Lock = "RC_LR_Elephant"}},
+    IN_HitchingPost = {
+        {CreationKey = "IN_MRINC_CAR", Lock = "RC_IN_MRINC_CAR"},
+        {CreationKey = "INC_MrInc_SportsCar", Lock = "RC_INC_MrInc_SportsCar"}
+    },
+    IN_HelicopterHitchingPost = {{CreationKey = "INC_Helicopter_Bomb", Lock = "RC_TOY_SUPER_HERO_HELICOPTER"}},
+    MU_HitchingPost = {
+        {CreationKey = "MU_Bicycle", Lock = "RC_MU_BIKE"},
+        {CreationKey = "MU_Bicycle_Mini", Lock = "RC_MU_BIKE_MINI"},
+        {CreationKey = "MU_Bicycle_Sully", Lock = "RC_MU_BIKE_SULLEY"},
+        {CreationKey = "MU_Bicycle_Randall", Lock = "RC_MU_BIKE_RANDY"}
+    },
+    TS_HitchingPost = {{CreationKey = "AV_Bullseye", Lock = "RC_BULLSEYE"}},
+    TS_AlienHorseHitchingPost = {{CreationKey = "AlienHorse", Lock = "RC_ROBO_BULLSEYE"}}
+}
+-- Native default lists differ by avatar (Scout/Silver, Sulley's bike, etc.).
+-- Reuse one only for its matching post type, never summon a car at a horse post.
+-- An unknown custom fallback is left entirely under its original mod's control.
+if summon.Mounts ~= nil then
+    if type(summon.Mounts) ~= "table" then return end
+    if #summon.Mounts > 0 then
+        local matched = false
+        for post, mounts in pairs(defaults) do
+            local belongs = true
+            for _, original in ipairs(summon.Mounts) do
+                local known = false
+                for _, candidate in ipairs(mounts) do
+                    if type(original) == "table" and original.CreationKey == candidate.CreationKey then known = true end
+                end
+                if not known then belongs = false end
+            end
+            if belongs then defaults[post] = summon.Mounts; matched = true end
+        end
+        if not matched then return end
+    end
+end
+local count = 0
+for post, mounts in pairs(defaults) do
+    if typed[post] == nil then typed[post] = mounts; count = count + 1 end
+end
+summon.TypedMounts = typed
+gadgets.SummonMount = summon
+if count > 0 then log("APPLIED: " .. name .. " supports " .. count .. " additional native hitching-post types; locks preserved") end
+)lua";
 inline constexpr std::string_view characterPreloadsPatch = R"lua(
 local _, options, log = ...
 if type(DataMap) ~= "table" then return end
@@ -39,8 +148,18 @@ if type(common) == "table" then
             seen[string.lower(file)] = true
         end
     end
+    -- Native Toy Box vehicle audio supplies visitor engines, body sounds and
+    -- dialogue rules. Keep Audio records so the engine resolves language/lifetime.
+    for _, file in ipairs({"Audio|RumpusVehicles.fev", "Audio|RumpusCarBody.fev",
+        "Audio|VehicleEngine.fev", "Audio|CARS_TBScript.dlg"}) do
+        if not seen[string.lower(file)] then
+            common.Files[#common.Files + 1] = file
+            seen[string.lower(file)] = true
+        end
+    end
     log("APPLIED: common playset preload includes original avatar stats, motion FX and tool actors")
     log("APPLIED: original avatar customization packages available across playsets")
+    log("APPLIED: original vehicle engine/body audio and Cars dialogue rules preloaded across playsets")
 end
 local groups = DataMap.Include
 if type(groups) ~= "table" or type(groups.avatarstats) ~= "table" then return end
@@ -134,6 +253,23 @@ for _, record in pairs(records) do
     end
 end
 )lua";
+inline constexpr std::string_view characterNativeActorHomesPatch = R"lua(
+local _, options, log = ...
+if not LiteralCrab.has("RegisterPlaysetAvatars") then return end
+if type(Data) ~= "table" or Data.Type ~= "ActorList" or type(Data.Records) ~= "table" or
+    type(options.Playset) ~= "string" then return end
+local count = 0
+for _, actor in pairs(Data.Records) do
+    if type(actor) == "table" and actor.Type == "Avatar" and type(actor.Name) == "string" and
+        string.lower(string.sub(actor.Name, -3)) == "_ps" then
+        -- Native actor tables can contain a _PS variant omitted from the PC
+        -- selection roster. Keep its home separate from public membership.
+        LiteralCrab.RegisterPlaysetAvatars(options.Playset, string.sub(actor.Name, 1, -4))
+        count = count + 1
+    end
+end
+if count > 0 then log("APPLIED: native actor variants registered for " .. options.Playset) end
+)lua";
 inline constexpr std::string_view characterToyboxActorsPatch = R"lua(
 local _, options, log = ...
 if not LiteralCrab.has("RegisterPlaysetAvatars") then return end
@@ -166,6 +302,15 @@ for _, name in ipairs({"Cars", "Incredibles", "LoneRanger", "MonstersU", "Pirate
         playset.WantToyBoxFX = true
         -- Motion-event choreography is separately filtered as "bloat" FX.
         playset.WantBloatFX = true
+        -- CarEnergy still checks whether the actor is a local controlled car.
+        -- This world gate must allow the native nitro HUD for visiting Cars.
+        playset.ShowCarEnergyMeterUI = true
+        -- Incredibles disables the vehicle tool selector at the world level.
+        -- Visiting Cars still use their native tool/unlock/input checks.
+        if name == "Incredibles" and playset.DisableVehicleToolSelect == true then
+            playset.DisableVehicleToolSelect = false
+            log("APPLIED: visiting Cars can select vehicle tools in Incredibles")
+        end
         changed = changed + 1
     end
 end

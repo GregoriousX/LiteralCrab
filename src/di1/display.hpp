@@ -9,4 +9,6 @@ struct DisplaySnapshot { HWND window; unsigned width, height; Mode mode; bool ma
 DisplaySnapshot displaySnapshot();
 // Diagnostics: called on the window thread after the game handled WM_ACTIVATE.
 void setFocusObserver(void (*observer)(bool active));
+// Runs once when the engine calls a D3D factory, after the loader lock is released.
+void setGraphicsStartupObserver(void (*observer)());
 }

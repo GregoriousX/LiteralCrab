@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Holds the asset index for the lifetime of the process. Points file opens and attribute queries
-// for files replaced on disk at the mod or cache copy (kernel32 hooks, so sound and video
+// for added/replaced files and their directories at the mod or cache copy (kernel32 hooks, so sound and video
 // libraries are covered too), and serves files the engine's loader requests by name.
 #pragma once
 #include "mods/asset_mods.hpp"

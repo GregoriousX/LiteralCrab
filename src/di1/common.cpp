@@ -51,6 +51,8 @@ void openLogAndConfig(HMODULE module) {
     else if (!_wcsicmp(sync,L"on")) settings.vsync = VSync::On;
     else if (_wcsicmp(sync,L"auto")) log("Invalid VSync; using auto.");
     settings.diagnostics = GetPrivateProfileIntW(L"Display", L"Diagnostics", 0, iniPath) != 0;
+    settings.exceptionDiagnostics = GetPrivateProfileIntW(L"Diagnostics", L"ExceptionLog", 1, iniPath) != 0;
+    settings.crashReports = GetPrivateProfileIntW(L"Diagnostics", L"CrashReports", 1, iniPath) != 0;
     settings.mods = GetPrivateProfileIntW(L"Mods", L"Enabled", 1, iniPath) != 0;
     settings.modTrace = GetPrivateProfileIntW(L"Mods", L"Trace", 0, iniPath) != 0;
     wchar_t delay[64]{};

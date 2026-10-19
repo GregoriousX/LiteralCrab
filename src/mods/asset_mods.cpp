@@ -173,6 +173,20 @@ const std::wstring* AssetIndex::find(std::string_view path) const noexcept {
     return found != redirects.end() && found->path == path ? &found->target : nullptr;
 }
 
+bool AssetIndex::hasDirectory(std::string_view path) const noexcept {
+    if (path.empty() || path.back() == '/') return false;
+    // Compare against path + '/' without allocating that temporary string. A
+    // same-named file or prefix such as "rur2" is not this directory.
+    const auto found = std::lower_bound(redirects.begin(), redirects.end(), path,
+        [](const AssetRedirect& redirect, std::string_view value) {
+            const auto order = std::string_view(redirect.path).substr(0, value.size()).compare(value);
+            if (order) return order < 0;
+            return redirect.path.size() == value.size() || redirect.path[value.size()] < '/';
+        });
+    return found != redirects.end() && found->path.size() > path.size() &&
+        found->path.compare(0, path.size(), path) == 0 && found->path[path.size()] == '/';
+}
+
 const AssetMember* AssetIndex::member(std::string_view name) const noexcept {
     const auto found = std::lower_bound(members.begin(), members.end(), name,
         [](const AssetMember& item, std::string_view value) { return item.name < value; });
@@ -281,14 +295,12 @@ AssetIndex AssetIndex::build(const std::wstring& gameAssets, const std::wstring&
                         throw std::runtime_error(item.name + " uses an unsupported compression method (use Deflate or Store)");
                     addMember(memberName(folder + inner), {source.mod, {}, archive, member}, "assets/" + relative + ": " + item.name);
                 }
-            } else if (onDisk) {
-                // Opened from disk by the game, e.g. videos and sound banks.
-                index.redirects.push_back({relative, source.package ? extract(source, cache + L"\\assets\\" + windowsPath(relative)) : source.file});
             } else {
-                if (source.package) {
-                    const auto method = source.package->entries()[source.entry].method;
-                    if (method != 0 && method != 8) throw std::runtime_error("unsupported compression method (use Deflate or Store)");
-                }
+                // Content packs add files as well as replacing them. Any of
+                // these may be opened through Windows or the engine's member
+                // loader, regardless of extension or native-file existence.
+                const auto target = source.package ? extract(source, cache + L"\\assets\\" + windowsPath(relative)) : source.file;
+                index.redirects.push_back({relative, target});
                 addMember(memberName(relative), source, "assets/" + relative);
             }
         } catch (const std::exception& failure) {

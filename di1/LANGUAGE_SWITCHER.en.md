@@ -7,7 +7,7 @@ Language selection is integrated into **LiteralCrab.asi**. It is disabled by def
 LanguageSwitcher=off
 ```
 
-With the game closed, install the language pack and follow its audio setup, then set:
+With the game closed, install the language pack into the active `mods` folder, then set:
 
 ```ini
 [Startup]
@@ -41,13 +41,13 @@ The following 18 locale IDs are defined in the PS3 `locale/locale.gfg` files (Ja
 
 Short aliases `english`, `french`, `spanish` and `portuguese` select `EnglishNTSC`, `FrenchPAL`, `SpanishNTSC` and `BrazilianPortuguese`. Regional aliases include `englishus`, `englishuk`, `frenchcanadian` (also `frenchcanada`), `frenchparisian`, `spanishlatinamerica`, and `spanishspain` (also `castilianspanish`). For example, `LanguageSwitcher=italian` or `LanguageSwitcher=englishuk`. An exact additional native locale ID can also be supplied; the loaded game configuration must support it. Empty, `off`, `auto` and `default` leave both startup calls untouched.
 
-This list identifies supported settings, not bundled language packs. Additional languages require a PC-compatible pack that registers the locale in the PC build of `locale.gfg`, supplies converted Win32 dictionaries, fonts and any voices, and prepares native audio directories. Raw PS3 files alone are insufficient. Gold's existing five locales remain factory choices; other entries require the dictionary preflight below.
+This list identifies supported settings, not bundled language packs. Additional languages require a PC-compatible pack that registers the locale in the PC build of `locale.gfg` and supplies converted Win32 dictionaries, fonts and any voices. Raw PS3 files alone are insufficient. Gold's existing five locales remain factory choices; other entries require the dictionary preflight below.
 
 Language mods need `[Mods] Enabled=1` and their own enabled configuration. The preflight uses the resolved asset provider, so pack folder names are not hardcoded and ordinary ZIP mods are supported. For added languages it checks that nonempty dictionaries are available for all eight game groups: `main`, `ca`, `in`, `lr`, `mu`, `pi`, `tb` and `ts`. For Polish these are `lang/<group>/polish_win32.dct`. Deliberately installed loose files under the game's `assets` directory are also accepted. Disabled mods do not make their assets available. A missing dictionary leaves the startup calls unchanged and logs the missing path.
 
 The native supported-language check runs at both initial locale setup and the later Steam callback. If a requested locale is unsupported, the original incoming language and native return value are preserved. If native selection fails, the wrapper retries the original incoming language. The INI setting takes priority on each launch; to resume the original Steam language behavior, set it back to `off`. The switcher does not read or write the saved-language registry setting and does not add language menu entries or change the language during play.
 
-The PS3-derived 0.2.3 packs still need their existing audio-directory setup. Their `Install-Audio.ps1` creates a directory junction such as `assets/sound/dialog/PLP` pointing to the pack's audio folder. Integration does not create or replace these junctions, and text selection alone does not verify speech. Keep the junction's target pack installed. English voice/video fallbacks and incomplete translations remain properties of the pack.
+The current `dev` loader exposes added files from active mods to native audio reads before audio initialization, so the packs' legacy `Install-Audio.ps1` junction workaround is unnecessary. Loose banks stay in the mod folder; packaged banks are prepared in `mods/.cache`. Earlier active mods win each path. Do not remove an existing native directory unless you have verified it is only a temporary mod junction. Text selection alone does not verify speech. English voice/video fallbacks and incomplete translations remain properties of the pack. See [native file access and validation](README.md#added-content-and-native-file-access).
 
 The implementation adapts the two-call startup mechanism documented in the DI1-PS3-Dubbing project. It verifies both x86 Gold call sites, decoded targets, relocated locale singleton and native function signatures before changing either call operand. Original functions remain intact; changes are in memory. A conflicting standalone ASI or different executable profile is refused. The switcher installs after mod assets are indexed and before native locale/audio startup, with no timer or frame polling. Decisions are recorded in **LiteralCrab.log**.
 

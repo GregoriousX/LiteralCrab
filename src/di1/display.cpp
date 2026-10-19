@@ -51,6 +51,7 @@ namespace {
     SRWLOCK hookLock = SRWLOCK_INIT;
     FramePacer framePacer;
     std::atomic<void (*)(bool)> focusObserver{};
+    std::atomic<void (*)()> graphicsStartupObserver{};
     std::atomic<bool> statsRequested{};
     // Present cadence collected in memory on the render thread; written only on request.
     struct FrameStats {
@@ -298,6 +299,7 @@ namespace {
     }
     IDirect3D9* WINAPI create9(UINT version) {
         // Called by the engine after loader-lock release. No D3D/GPU work runs in DllMain.
+        if (const auto observer = graphicsStartupObserver.exchange(nullptr)) observer();
         if (!realFactory) {
             const HMODULE d3dModule = LoadLibraryW(L"d3d9.dll");
             const auto nativeResolve = reinterpret_cast<decltype(&GetProcAddress)>(resolverImport.original);
@@ -312,6 +314,7 @@ namespace {
         return d3d;
     }
     HRESULT WINAPI create9Ex(UINT version, IDirect3D9Ex** output) {
+        if (const auto observer = graphicsStartupObserver.exchange(nullptr)) observer();
         if (!realFactoryEx) {
             const HMODULE d3dModule = LoadLibraryW(L"d3d9.dll");
             const auto nativeResolve = reinterpret_cast<decltype(&GetProcAddress)>(resolverImport.original);
@@ -627,6 +630,7 @@ bool installDisplayHooks(HMODULE host, const Config& settings) {
     return true;
 }
 void removeDisplayHooks() {
+    graphicsStartupObserver = nullptr;
     detachWindow(); device = nullptr;
     if (deviceParent) { deviceParent->Release(); deviceParent = nullptr; }
     factoryImport.remove(); resolverImport.remove(); screenToClientImport.remove(); clientToScreenImport.remove(); showWindowImport.remove();
@@ -636,6 +640,7 @@ void removeDisplayHooks() {
     }
 }
 void setFocusObserver(void (*observer)(bool active)) { focusObserver = observer; }
+void setGraphicsStartupObserver(void (*observer)()) { graphicsStartupObserver = observer; }
 DisplaySnapshot displaySnapshot() {
     return {window.load(), bufferWidth.load(), bufferHeight.load(), requestedMode.load(), managed.load(), presents.load()};
 }

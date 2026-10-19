@@ -130,11 +130,27 @@ Some game capabilities have no Lua binding on PC. LiteralCrab provides a few as 
 | `PlaceDisc(player, disc)` | `true` once the round power disc is on the virtual base, as if set under that player's figure (`player` 0 or 1). The game then applies and reports it like a disc on a real base. Placing it again changes nothing. |
 | `RemoveDisc(disc)` | `true` when the disc is no longer on the base. |
 | `IsDiscPlaced(disc)` | Whether the disc is on the base. |
+| `GetDiscOwner(disc)` | Read-only owner of an actual placed round disc: `0`/`1` player, `-1` valid round disc absent, `-2` invalid argument/category, unavailable gateway, unreadable/inconsistent record, unsupported antenna or native read failure. Requires a numeric integer ID; strings are rejected. |
 | `TagCategory(id)` | The game's own classification of a figure or disc ID: `0` figure, `1` round power disc, `2`/`3` hex power disc, `4` play set or Toy Box piece, `-1` unknown. |
 
 Round power discs are DI1 IDs `3000003`–`3000017` and `3000062`–`3000063`. `PlaceDisc` only accepts IDs the game itself classes as round discs, so figures, play set pieces and hex discs stay with the game's virtual reader. Verified examples: `3000003` Bolt's Super Strength (all damage), `3000004` Ralph's Power of Destruction (melee damage), `3000006` C.H.R.O.M.E. Damage Increaser (ranged damage), `3000008` Electro-Charge (full health). The discs a player has active can be read in UI scripts with the game's own `UI_GetItemDetails("PowerDiscs", player, "Name,Value,Type")`.
 
-`player` is the game's local player index (`0` for the first player, as in `self.InstanceData.playerNum`), and `tool` is a tool identifier such as `ITEM_BASEBALLGUN` or `PROP_SHOVELPACK`. Invalid arguments return `false`. Awards belong to the current avatar. A mod that should keep a tool available re-applies it, for example when the pause menu opens, rather than assuming it survives character swaps or reloads.
+`GetDiscOwner` queries the native tag on every call, so its result survives replacement of the Lua/menu environment and does not depend on cached slots or delayed avatar effects. Its record-layout validation is independent: a mismatch withholds this function while retaining the existing disc adapters. Check `LiteralCrab.has("GetDiscOwner")` before use. Treat `-2` as unknown, never as absent or permission to remove a tag. The query does not place/remove discs, update an avatar, refresh effects, or write a profile/save. A mod must explicitly use it to reconstruct its menu state; exporting the function alone does not change existing mod UI.
+
+```lua
+if LiteralCrab.has("GetDiscOwner") then
+    local owner = LiteralCrab.GetDiscOwner(3000063)
+    if owner == self.InstanceData.playerNum then
+        -- Reconstruct this player's card from the actual native tag.
+    elseif owner == -2 then
+        -- Ownership is unknown: defer changes to this disc.
+    end
+end
+```
+
+PL: `GetDiscOwner(disc)` odczytuje właściciela rzeczywiście założonego okrągłego dysku: `0`/`1` oznacza gracza, `-1` brak prawidłowego dysku na bazie, a `-2` błędny argument, nieznany stan lub błąd odczytu. ID musi być liczbą całkowitą, sklasyfikowaną przez grę jako round disc; tekstowe ID nie są przyjmowane. Odczyt jest niezależny od pamięci menu Lua. Niezgodny układ rekordu wyłącza tylko nową funkcję, zachowując stare adaptery. Mod sprawdza dostępność przez `LiteralCrab.has("GetDiscOwner")` i nie może traktować `-2` jak braku dysku. Funkcja nie zmienia tagów, efektów ani zapisu; mod musi osobno wykorzystać wynik do odbudowania kart.
+
+`player` is the game's local player index (`0` for the first player, as in `self.InstanceData.playerNum`), and `tool` is a tool identifier such as `ITEM_BASEBALLGUN` or `PROP_SHOVELPACK`. Invalid tool arguments return `false`; numeric queries use the documented negative results above. Awards belong to the current avatar. A mod that should keep a tool available re-applies it, for example when the pause menu opens, rather than assuming it survives character swaps or reloads.
 
 ```lua
 local menu = ...  -- patch on Presentation/PauseMenu.lua, which returns the PauseMenu class

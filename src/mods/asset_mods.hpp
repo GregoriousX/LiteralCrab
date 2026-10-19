@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Engine-neutral asset mods. A mod supplies files below an "assets" folder, loose in
-// mods\<mod>\assets\ or inside ordinary .zip packages in mods\<mod>\. A file the game keeps on
-// disk (videos, sound banks) is replaced by redirecting its opens. Everything else is served by
-// name when the engine's file loader asks for it, so the game's archives are never rebuilt:
-// startup only lists the mods' files, and data is read when it is requested.
+// mods\<mod>\assets\ or inside ordinary .zip packages in mods\<mod>\. Added and replaced files
+// are available through native opens and the engine's member loader. Packaged files that must
+// exist on disk are extracted into the mod cache; original game archives are never rebuilt.
 #pragma once
 #include "mods/mod_index.hpp"
 #include "mods/zip.hpp"
@@ -31,12 +30,15 @@ struct AssetMember {
 class AssetIndex {
 public:
     // gameAssets: the game's assets folder. cache: folder for files that must exist on disk
-    // but come from a package (created on demand). Problems are described in messages.
+    // but come from a package (extracted during indexing). Problems are described in messages.
     static AssetIndex build(const std::wstring& gameAssets, const std::wstring& cache,
         const std::vector<Mod>& mods, std::vector<std::string>& messages);
     bool empty() const noexcept { return redirects.empty() && members.empty(); }
     // Hot paths: no allocation. path as produced by assetPath(); name as the engine requests it.
     const std::wstring* find(std::string_view path) const noexcept;
+    // True when a winning disk redirect exists below this directory. Normalized
+    // path below assets, without a trailing slash; no disk writes or allocation.
+    bool hasDirectory(std::string_view path) const noexcept;
     const AssetMember* member(std::string_view name) const noexcept;
     // Reads a member's data; thread-safe. False when the file vanished or is damaged.
     bool read(const AssetMember& member, std::string& data) const noexcept;

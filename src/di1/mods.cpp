@@ -4,7 +4,9 @@
 #include "di1/mods.hpp"
 #include "di1/adapters.hpp"
 #include "di1/asset_loader.hpp"
+#include "di1/audio_banks.hpp"
 #include "di1/character_freedom.hpp"
+#include "di1/character_targets.hpp"
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
 #include "di1/toybox_share.hpp"
@@ -17,6 +19,7 @@
 #include <exception>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace crabe::di1 {
@@ -121,14 +124,19 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         const auto started = GetTickCount64();
         auto assets = mods::AssetIndex::build(gameAssets, modsRoot + L"\\.cache", list, messages);
         const auto redirects = assets.redirects.size(), members = assets.members.size();
+        bool audioBanks{};
+        for (const auto& asset : assets.redirects)
+            if (asset.path.starts_with("sound/") && asset.path.ends_with(".fsb")) { audioBanks = true; break; }
         // The index is kept first: the loader hook asks it for files as soon as it is enabled.
         if (!mods::installFileRedirect(std::move(assets), &log, trace) && redirects)
             messages.push_back("Mods: files the game opens from disk cannot be replaced; those stay original.");
         if ((members || trace || config().traceCharacterFreedom) && !installAssetLoader(host, members ? &mods::readAssetMember : nullptr, trace) && members)
             messages.push_back("Mods: files inside the game's archives cannot be replaced on this build.");
+        if (audioBanks && !installAudioBankTrace(host))
+            messages.push_back("Mods: native audio-bank diagnostics unavailable on this profile.");
         if (redirects || members)
             messages.push_back("Mods: " + std::to_string(redirects) + " file(s) replaced on disk, " + std::to_string(members) +
-                " served to the engine's loader; prepared in " + std::to_string(GetTickCount64() - started) + " ms.");
+              " served to the engine's loader; prepared before game/audio startup in " + std::to_string(GetTickCount64() - started) + " ms.");
     }
 
     // [Engine] features: each is installed once, and only when an enabled mod requests it.
@@ -162,6 +170,21 @@ bool installMods(HMODULE host) {
         if (characterFreedomActive()) {
             index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "character_playsets", std::string(characterPlaysetsPatch), "{}");
             index.addBuiltinPatch({"contains:ActorList"}, "character_actor_registry", std::string(characterToyboxActorsPatch), "{}");
+            for (const auto [file, marker, home] : {
+                std::tuple{"incredibles_actors.lua", "contains:av_mrincredible_ps", "Incredibles"},
+                std::tuple{"monstersu_actors.lua", "contains:mu_randall_ps", "MonstersU"},
+                std::tuple{"pirates_actors.lua", "contains:pir_jacksparrow_ps", "Pirates"},
+                std::tuple{"loneranger_actors.lua", "contains:lr_loneranger_ps", "LoneRanger"},
+                std::tuple{"toystoryinspace_actors.lua", "contains:av_buzz_ps", "ToyStoryInSpace"}})
+                index.addBuiltinPatch({file, marker}, std::string("character_native_home_") + home,
+                    std::string(characterNativeActorHomesPatch), std::string("{Playset='") + home + "'}");
+            index.addBuiltinPatch({"contains:AvatarInteractionHud", "contains:SummonMount"},
+                "character_mounts", std::string(characterMountsPatch), "{}");
+            if (installCharacterTargets(reinterpret_cast<std::uintptr_t>(host))) {
+                index.addBuiltinPatch({"lr_shoottargets.dnax", "contains:target_bullseye"},
+                    "character_targets", std::string(characterTargetsPatch), "{}");
+                log("Character freedom: bounded ordinary-target projectile gate enabled.");
+            } else log("Character freedom: ordinary-target signature/hook differs; target definitions unchanged.");
             index.addBuiltinPatch({"coredatamap.lua", "rumpusroomdatamap.lua", "contains:_loadforallplaysets_", "contains:avatarstats"},
                 "character_preloads", std::string(characterPreloadsPatch), "{}");
             if (settings.traceCharacterFreedom) {
@@ -203,7 +226,7 @@ bool installMods(HMODULE host) {
             bind(api.pushBoolean, base + adapterLuaFunctions[2].rva);
             bind(api.type, base + adapterLuaFunctions[3].rva);
             bind(api.pushNumber, base + adapterLuaFunctions[4].rva);
-            api.adapters = resolveAdapters(host, api);
+            api.adapters = resolveAdapters(host, api, characterToolQueryHook());
         } else {
             log("Mods: Lua value functions differ; no LiteralCrab adapters.");
         }

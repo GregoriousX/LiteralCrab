@@ -4,6 +4,6 @@
 
 namespace crabe::di1 {
 // [Controller] options from LiteralCrab.ini. Hooks nothing while every option keeps the game's
-// own button layout.
+// own button layout and input diagnostics are off.
 bool installControllerHooks(HMODULE host, const Config& options);
 }

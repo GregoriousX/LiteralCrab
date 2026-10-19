@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "di1/character_freedom_policy.hpp"
 #include "di1/character_freedom.hpp"
+#include "di1/adapters.hpp"
 #include "di1/character_particles.hpp"
 #include "di1/particle_directory.hpp"
 #include "minhook/MinHook.h"
@@ -215,6 +216,10 @@ const char* __cdecl testLuaString(lua_State*, int index, std::size_t* length) {
     *length = std::strlen(value);
     return value;
 }
+double __cdecl testLuaNumber(lua_State*, int) { return 0; }
+int __cdecl testLuaBoolean(lua_State*, int) { return 0; }
+int __cdecl testLuaType(lua_State*, int) { return 3; }
+void __cdecl testLuaPushBoolean(lua_State*, int) {}
 bool replaceCode(void* address, const void* data, std::size_t length) {
     DWORD protection{};
     if (!VirtualProtect(address, length, PAGE_EXECUTE_READWRITE, &protection)) return false;
@@ -397,6 +402,18 @@ int wmain(int argc, wchar_t** argv) {
                 options.charactersInAnyPlayset = true;
                 CHECK(crabe::di1::installCharacterFreedom(image, options));
                 CHECK(crabe::di1::characterFreedomActive());
+                crabe::mods::LuaApi adaptersApi;
+                adaptersApi.toLString = testLuaString; adaptersApi.toNumber = testLuaNumber;
+                adaptersApi.toBoolean = testLuaBoolean; adaptersApi.pushBoolean = testLuaPushBoolean;
+                adaptersApi.type = testLuaType;
+                const auto hasAward = [](const auto& adapters) {
+                    for (const auto& entry : adapters) if (entry.name == "AwardTool") return true;
+                    return false;
+                };
+                // The exact production order: freedom hooks are already active
+                // when the mod loader resolves Lua capabilities.
+                CHECK(!hasAward(crabe::di1::resolveAdapters(image, adaptersApi)));
+                CHECK(hasAward(crabe::di1::resolveAdapters(image, adaptersApi, crabe::di1::characterToolQueryHook())));
                 // Drive the installed x86 detour and real ownership adapter with stand-ins for
                 // the two engine dependencies. This exercises their calling conventions and
                 // delegation without starting an engine, creating actors, or loading a save.
@@ -774,7 +791,33 @@ int wmain(int argc, wchar_t** argv) {
                 }
                 testPlayerIndex = 0;
                 testContextResult = false; CHECK(!getMenu(&stateActor, &context));
+                // Native per-avatar classification, not purchase/award/unlock,
+                // controls the exception. Both blasters and other shared gear
+                // must stay filtered even after the player bought them in Toy Box.
+                for (const char* name : {"ITEM_BLASTERWEAK", "ITEM_BLASTER", "ITEM_GOOGUNGREEN", "PROP_JETPACK", "ITEM_PIXARBALL"}) {
+                    *reinterpret_cast<const char**>(toolParent + 0x14) = name;
+                    for (const bool prerequisite : {false, true}) {
+                        *reinterpret_cast<const void**>(toolParent + 0x20) = prerequisite ? &zones : nullptr;
+                        *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 1;
+                        for (const unsigned flags : {4u, 6u}) {
+                            toolParent[0x78] = static_cast<unsigned char>(flags);
+                            CHECK(getWorld(toolParent, &zones) == 0);
+                        }
+                    }
+                }
+                // Even a false classification must not bypass a prerequisite.
+                *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 0;
+                CHECK(getWorld(toolParent, &zones) == 0);
+                *reinterpret_cast<const void**>(toolParent + 0x20) = nullptr;
+                CHECK(getWorld(toolParent, &zones) == 1); // Innate Pixar Ball.
+                // A native allowed result is preserved for shared gear in its
+                // own world and Toy Box, without changing any cached state.
+                *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 1;
                 testWorldResult = 2; CHECK(getWorld(toolParent, &zones) == 2);
+                testCurrentPlayset = "RumpusRoom";
+                CHECK(getWorld(toolParent, &zones) == 2);
+                testCurrentPlayset = "Incredibles";
+                *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 0;
                 testWorldResult = 0; CHECK(getWorld(toolParent, nullptr) == 0);
                 // Inventory can cache a failed zone check before player registration.
                 // Refresh only that state, through the native bool(false) ABI. Test
@@ -814,6 +857,22 @@ int wmain(int argc, wchar_t** argv) {
                     const auto before = observedRefreshCalls;
                     CHECK(!getUnlocked(testTools, toolName)); CHECK(observedRefreshCalls == before);
                 };
+                // The early failed-zone cache refresh must use the same scope:
+                // otherwise IsToolUnlocked could reintroduce the shared blaster.
+                for (const char* name : {"ITEM_BLASTERWEAK", "ITEM_BLASTER", "ITEM_GOOFRUITGREEN", "ITEM_PIXARBALL"}) {
+                    *reinterpret_cast<const char**>(toolParent + 0x14) = name;
+                    toolParent[0x78] = 2;
+                    *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 1;
+                    const auto before = observedRefreshCalls;
+                    CHECK(!getUnlocked(testTools, name));
+                    CHECK(toolParent[0x78] == 2 && observedRefreshCalls == before);
+                }
+                *reinterpret_cast<const char**>(toolParent + 0x14) = toolName;
+                toolParent[0x78] = 0;
+                *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 0;
+                *reinterpret_cast<const void**>(toolParent + 0x20) = &zones;
+                expectNoRefresh();
+                *reinterpret_cast<const void**>(toolParent + 0x20) = nullptr;
                 for (const char* playset : {"RumpusRoom", "Miscellaneous", "Mod_CustomWorld", ""}) {
                     testCurrentPlayset = playset; expectNoRefresh();
                 }

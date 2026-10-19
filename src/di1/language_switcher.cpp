@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Integrates the two startup call sites documented by DI1-PS3-Dubbing's
 // language_startup.cpp. The INI selects a language; packs retain ownership of
-// locale definitions, dictionaries, fonts, voices and native audio-directory setup.
+// locale definitions, dictionaries, fonts and voices; the mod asset loader exposes
+// added native audio files before startup.
 #include "di1/language_switcher.hpp"
 #include "di1/language_policy.hpp"
 #include <array>

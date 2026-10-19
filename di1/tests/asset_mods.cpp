@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
 
 using namespace crabe::mods;
 namespace fs = std::filesystem;
@@ -64,6 +65,110 @@ static std::string served(const AssetIndex& index, std::string_view name) {
     const auto* item = index.member(name);
     std::string data;
     return item && index.read(*item, data) ? data : "<none>";
+}
+
+static void addedContentFiles(const fs::path& root) {
+    const auto game = root / "audio-game" / "assets";
+    const auto mods = root / "audio-mods";
+    const auto cache = mods / ".cache";
+    write(game / "sound/dialog/ENU/native.fsb", "factory bank");
+    write(game / "sound/dialog/ENU/native.name", "factory names");
+    write(mods / "00_disabled/mod.ini", "[Mod]\nName=Disabled language\n");
+    write(mods / "00_disabled/user.ini", "[Mod]\nEnabled=0\n");
+    write(mods / "00_disabled/assets/sound/dialog/JPN/disabled.fsb", "disabled");
+    write(mods / "00_disabled/assets/custom/disabled/file.new", "disabled custom file");
+    for (const auto* mod : {"10_early", "20_later", "30_pack", "40_damaged"})
+        write(mods / mod / "mod.ini", "[Mod]\nName=Audio fixture\n");
+    write(mods / "10_early/assets/sound/dialog/PLP/shared.fsb", "early bank");
+    write(mods / "10_early/assets/sound/dialog/PLP/shared.name", "early names");
+    write(mods / "20_later/assets/sound/dialog/PLP/shared.fsb", "later bank");
+    write(mods / "20_later/assets/sound/dialog/PLP/shared.name", "later names");
+    write(mods / "20_later/assets/sound/dialog/PLP/unique.fsb", "later unique bank");
+    write(mods / "20_later/assets/sound/dialog/PLP/unique.name", "later unique names");
+    write(mods / "20_later/assets/sound/dialog/RUR/russian.fsb", "russian bank");
+    write(mods / "20_later/assets/sound/dialog/RUR/russian.name", "russian names");
+    write(mods / "20_later/assets/sound/dialog/RUR/readme.txt", "not a native bank");
+    write(mods / "20_later/assets/other/table.name", "not a sound sidecar");
+    write(mods / "10_early/assets/characters/customhero/nested/rig.newformat", "custom rig");
+    write(mods / "20_later/assets/characters/customhero/nested/rig.newformat", "lower priority rig");
+    write(mods / "20_later/assets/characters/customhero/nested/unique.custom", "custom component");
+    std::string bankData;
+    for (int n = 0; n < 20; ++n) bankData += "PS3 buttons! ";
+    write(mods / "30_pack/audio.zip", normalZip({
+        {"assets/sound/dialog/ARS/arabic.fsb", 8, bankData, std::string("\x0b\x08\x36\x56\x48\x2a\x2d\x29\xc9\xcf\x2b\x56\x54\x08\x18\x99\x1c\x00", 18)},
+        {"assets/sound/dialog/ARS/arabic.name", 0, "arabic names", "arabic names"},
+        {"assets/characters/customhero/behavior.unrecognized", 0, "custom behavior", "custom behavior"},
+        {"assets/custom/new.zip", 0, "opaque game archive", "opaque game archive"}}));
+    // CRC failures are reported per file and never expose a partially extracted
+    // redirect/member. An independent valid sidecar/bank remains usable.
+    write(mods / "40_damaged/audio.zip", normalZip({
+        {"assets/sound/dialog/RUR/bad.fsb", 0, "good", "evil"},
+        {"assets/sound/dialog/RUR/bad.name", 0, "valid sidecar", "valid sidecar"},
+        {"assets/sound/dialog/RUR/good.fsb", 0, "valid bank", "valid bank"},
+        {"assets/sound/dialog/RUR/good.name", 0, "good", "evil"},
+        {"assets/custom/broken/file.new", 12, "bad compression", "bad compression"}}));
+    for (const auto* language : {"PLP", "RUR", "ARS"}) CHECK(!fs::exists(game / "sound/dialog" / language));
+    std::vector<std::string> messages;
+    const auto enabled = Index::load(mods.wstring(), messages);
+    CHECK(enabled.mods.size() == 4 && logged(messages, "Mod 00_disabled: disabled."));
+    auto index = AssetIndex::build(game.wstring(), cache.wstring(), enabled.mods, messages);
+    CHECK(logged(messages, "Mod 20_later: assets/sound/dialog/plp/shared.fsb ignored; 10_early already replaces it."));
+    CHECK(logged(messages, "Mod 20_later: assets/sound/dialog/plp/shared.name ignored; 10_early already replaces it."));
+    CHECK(logged(messages, "assets/sound/dialog/rur/bad.fsb not applied:"));
+    CHECK(logged(messages, "assets/sound/dialog/rur/good.name not applied:"));
+    CHECK(logged(messages, "assets/custom/broken/file.new not applied:"));
+    const auto disk = [&](std::string_view path) { const auto* file = index.find(path); return file ? slurp(*file) : "<none>"; };
+    for (const auto& [name, data] : std::vector<std::pair<std::string, std::string>>{
+        {"plp/shared.fsb", "early bank"}, {"plp/shared.name", "early names"},
+        {"plp/unique.fsb", "later unique bank"}, {"plp/unique.name", "later unique names"},
+        {"rur/russian.fsb", "russian bank"}, {"rur/russian.name", "russian names"},
+        {"ars/arabic.name", "arabic names"}, {"rur/good.fsb", "valid bank"}, {"rur/bad.name", "valid sidecar"}}) {
+        const auto path = "sound/dialog/" + name;
+        CHECK(disk(path) == data && served(index, path) == data);
+    }
+    const auto* packed = index.find("sound/dialog/ars/arabic.fsb");
+    CHECK(packed && packed->find(L".cache") != std::wstring::npos && slurp(*packed).size() == 260);
+    CHECK(served(index, "sound/dialog/ars/arabic.fsb").size() == 260);
+    CHECK(!index.find("sound/dialog/rur/bad.fsb") && !index.member("sound/dialog/rur/bad.fsb"));
+    CHECK(!index.find("sound/dialog/rur/good.name") && !index.member("sound/dialog/rur/good.name"));
+    CHECK(!index.find("sound/dialog/jpn/disabled.fsb") && !index.member("sound/dialog/jpn/disabled.fsb"));
+    CHECK(!index.find("custom/disabled/file.new") && !index.member("custom/disabled/file.new"));
+    CHECK(!index.find("custom/broken/file.new") && !index.member("custom/broken/file.new"));
+    CHECK(disk("sound/dialog/rur/readme.txt") == "not a native bank" && served(index, "sound/dialog/rur/readme.txt") == "not a native bank");
+    CHECK(disk("other/table.name") == "not a sound sidecar" && served(index, "other/table.name") == "not a sound sidecar");
+    CHECK(disk("characters/customhero/nested/rig.newformat") == "custom rig");
+    CHECK(served(index, "characters/customhero/nested/rig.newformat") == "custom rig");
+    CHECK(disk("characters/customhero/nested/unique.custom") == "custom component");
+    CHECK(served(index, "characters/customhero/nested/unique.custom") == "custom component");
+    CHECK(disk("characters/customhero/behavior.unrecognized") == "custom behavior");
+    CHECK(served(index, "characters/customhero/behavior.unrecognized") == "custom behavior");
+    CHECK(disk("custom/new.zip") == "opaque game archive" && served(index, "custom/new.zip") == "opaque game archive");
+    CHECK(!index.find("sound/dialog/enu/native.fsb") && !index.member("sound/dialog/enu/native.fsb"));
+    CHECK(slurp(game / "sound/dialog/ENU/native.fsb") == "factory bank");
+    CHECK(slurp(game / "sound/dialog/ENU/native.name") == "factory names");
+    for (const auto* language : {"PLP", "RUR", "ARS"}) CHECK(!fs::exists(game / "sound/dialog" / language));
+    CHECK(index.hasDirectory("sound") && index.hasDirectory("sound/dialog") && index.hasDirectory("sound/dialog/rur"));
+    CHECK(index.hasDirectory("sound/dialog/plp") && index.hasDirectory("sound/dialog/ars"));
+    CHECK(index.hasDirectory("characters") && index.hasDirectory("characters/customhero/nested"));
+    CHECK(index.hasDirectory("custom") && index.hasDirectory("other"));
+    CHECK(!index.hasDirectory("custom/disabled") && !index.hasDirectory("custom/broken"));
+    CHECK(!index.hasDirectory("characters/customhero/nest") && !index.hasDirectory("custom/new.zip"));
+    CHECK(!index.hasDirectory("sound/dialog/ru") && !index.hasDirectory("sound/dialog/rur2"));
+    CHECK(!index.hasDirectory("sound/dialog/jpn") && !index.hasDirectory("sound/dialog/enu"));
+    CHECK(!index.hasDirectory("sound/dialog/plp/shared.fsb") && !index.hasDirectory("") && !index.hasDirectory("sound/dialog/rur/"));
+    // A same-prefix file sorted before '/' must not hide the virtual directory.
+    AssetIndex prefixes;
+    prefixes.redirects = {{"sound/dialog/rur.name", L"names"}, {"sound/dialog/rur/a.fsb", L"bank"}, {"sound/dialog/rur2/b.fsb", L"other"}};
+    CHECK(prefixes.hasDirectory("sound/dialog/rur") && !prefixes.hasDirectory("sound/dialog/ru"));
+    if (packed) {
+        const auto stamp = fs::last_write_time(*packed);
+        const auto sidecar = fs::last_write_time(*index.find("sound/dialog/ars/arabic.name"));
+        Sleep(20);
+        messages.clear();
+        const auto again = AssetIndex::build(game.wstring(), cache.wstring(), enabled.mods, messages);
+        CHECK(again.find("sound/dialog/ars/arabic.fsb") && fs::last_write_time(*again.find("sound/dialog/ars/arabic.fsb")) == stamp);
+        CHECK(again.find("sound/dialog/ars/arabic.name") && fs::last_write_time(*again.find("sound/dialog/ars/arabic.name")) == sidecar);
+    }
 }
 
 int main() {
@@ -145,7 +250,7 @@ int main() {
     CHECK(logged(messages, "Mod third: no scripts or usable asset files found."));
 
     // Requests by name, never touching the game's archives.
-    CHECK(index.members.size() == 5);
+    CHECK(index.members.size() == 7);
     CHECK(served(index, "ui/controllerbuttons.mtb") == text);
     CHECK(served(index, "textures/aaa.tbody") == "ps3 A");
     CHECK(served(index, "ui/icons/icon.mtb") == text);
@@ -153,11 +258,14 @@ int main() {
     CHECK(served(index, "brand/new.lua") == "return 1");
     CHECK(!index.member("ui/ui.zip") && !index.member("ui/icons/icons.zip"));
     // Files the game opens from disk are redirected; a packaged one is extracted once.
-    CHECK(index.redirects.size() == 2);
+    CHECK(index.redirects.size() == 6);
     const auto* intro = index.find("fmv/intro.bik");
     CHECK(intro && slurp(*intro) == "modded video");
     const auto* outro = index.find("fmv/outro.bik");
     CHECK(outro && slurp(*outro) == "packed outro" && outro->find(L".cache") != std::wstring::npos);
+    CHECK(served(index, "fmv/intro.bik") == "modded video" && served(index, "fmv/outro.bik") == "packed outro");
+    CHECK(index.find("ui/controllerbuttons.mtb") && slurp(*index.find("ui/controllerbuttons.mtb")) == text);
+    CHECK(index.find("brand/new.lua") && slurp(*index.find("brand/new.lua")) == "return 1");
     if (outro) {
         const auto extracted = fs::last_write_time(*outro);
         Sleep(20);
@@ -181,6 +289,8 @@ int main() {
     CHECK(readAssetMember("Textures/AAA.tbody", data) && data == "ps3 A");
     CHECK(!readAssetMember("ui/other.mtb", data) && !readAssetMember(nullptr, data));
     setAssetIndexForTest({});
+
+    addedContentFiles(root);
 
     fs::remove_all(root);
     if (failures) return 1;

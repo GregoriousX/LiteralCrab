@@ -111,20 +111,30 @@ namespace {
 
     bool __cdecl hookLoad(const char* name, void* dest, unsigned size, unsigned offset, void* status) {
         std::string data;
-        if (provide(name, data) && serveLoad(data, dest, size, offset, status)) {
-            served.fetch_add(1, std::memory_order_relaxed);
-            note("load", name, true);
-            return true;
+        if (provide(name, data)) {
+            // Completion wakes another thread, which may release the request
+            // and its filename immediately. Diagnostics must own their copy.
+            char completedName[512]{};
+            if (name) strncpy_s(completedName, name, _TRUNCATE);
+            if (serveLoad(data, dest, size, offset, status)) {
+                served.fetch_add(1, std::memory_order_relaxed);
+                note("load", name ? completedName : nullptr, true);
+                return true;
+            }
         }
         note("load", name, false);
         return originalLoad(name, dest, size, offset, status);
     }
     bool __cdecl hookLoadAndAlloc(const char* name, void** out, unsigned extra, bool flag, void* heap, void* status) {
         std::string data;
-        if (provide(name, data) && serveAlloc(data, out, extra, flag, heap, status)) {
-            served.fetch_add(1, std::memory_order_relaxed);
-            note("load+alloc", name, true);
-            return true;
+        if (provide(name, data)) {
+            char completedName[512]{};
+            if (name) strncpy_s(completedName, name, _TRUNCATE);
+            if (serveAlloc(data, out, extra, flag, heap, status)) {
+                served.fetch_add(1, std::memory_order_relaxed);
+                note("load+alloc", name ? completedName : nullptr, true);
+                return true;
+            }
         }
         note("load+alloc", name, false);
         return originalLoadAndAlloc(name, out, extra, flag, heap, status);

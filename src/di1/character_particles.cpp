@@ -122,12 +122,10 @@ void __cdecl unloadParticles(void* library) {
     }
     originalUnload(library);
 }
-bool addHook(unsigned rva, void* callback, void*& trampoline, bool& installed) {
+bool createHook(unsigned rva, void* callback, void*& trampoline, bool& created) {
     void* target = reinterpret_cast<void*>(imageBase + rva);
-    if (MH_CreateHook(target, callback, &trampoline) != MH_OK) return false;
-    installed = MH_EnableHook(target) == MH_OK;
-    if (!installed) MH_RemoveHook(target);
-    return installed;
+    created = MH_CreateHook(target, callback, &trampoline) == MH_OK;
+    return created;
 }
 }
 
@@ -158,13 +156,26 @@ bool installCharacterParticles(std::uintptr_t base, bool trace) {
     }
     find = reinterpret_cast<Find>(base + 0xB75DF0);
     void* trampoline{};
-    if (!addHook(loadRva, reinterpret_cast<void*>(&loadParticles), trampoline, loadInstalled)) return false;
+    if (!createHook(loadRva, reinterpret_cast<void*>(&loadParticles), trampoline, loadInstalled)) {
+        removeCharacterParticles(); return false;
+    }
     originalLoad = reinterpret_cast<Load>(trampoline);
-    if (!addHook(importRva, reinterpret_cast<void*>(&importParticles), trampoline, importInstalled)) return false;
+    if (!createHook(importRva, reinterpret_cast<void*>(&importParticles), trampoline, importInstalled)) {
+        removeCharacterParticles(); return false;
+    }
     originalImport = reinterpret_cast<Import>(trampoline);
-    if (!addHook(unloadRva, reinterpret_cast<void*>(&unloadParticles), trampoline, unloadInstalled)) return false;
+    if (!createHook(unloadRva, reinterpret_cast<void*>(&unloadParticles), trampoline, unloadInstalled)) {
+        removeCharacterParticles(); return false;
+    }
     originalUnload = reinterpret_cast<Unload>(trampoline);
     attempted = importedSupplement = false; events = 0;
+    // Publish every original and initialize state before any callback can run.
+    // Enable the load path last: it may synchronously enter import/unload.
+    for (const auto rva : {importRva, unloadRva, loadRva}) {
+        if (MH_EnableHook(reinterpret_cast<void*>(base + rva)) != MH_OK) {
+            removeCharacterParticles(); return false;
+        }
+    }
     return true;
 }
 void removeCharacterParticles() noexcept {

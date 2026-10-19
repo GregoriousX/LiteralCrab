@@ -14,6 +14,8 @@ static int lastActivation = -1;
 static bool lastAppActivation = true;
 static IDirect3DDevice9Ex* exDevice{};
 static bool useEx{};
+static unsigned startupCalls{};
+static void startupProbe() { ++startupCalls; }
 static bool simulateFocusMinimize{};
 static D3DDISPLAYMODEEX exMode{};
 static void check(bool ok, const char* message) {
@@ -77,6 +79,26 @@ static HRESULT resetDevice(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS& params)
     return exDevice->ResetEx(&params,params.Windowed ? nullptr : &exMode);
 }
 int main(int argc, char** argv) {
+    if (argc > 1 && !strcmp(argv[1],"--factory-only")) {
+        Config probe; probe.mode=Mode::Fullscreen;
+        check(installDisplayHooks(GetModuleHandleW(nullptr),probe),"factory-only import hooks installed");
+        setGraphicsStartupObserver(startupProbe);
+        check(startupCalls==0,"startup observer is deferred beyond installation");
+        const bool extended=argc>2 && !strcmp(argv[2],"ex");
+        for (unsigned i=0; i<2; ++i) {
+            IDirect3D9* factory{};
+            if (extended) {
+                using ExFactory=HRESULT (WINAPI*)(UINT,IDirect3D9Ex**);
+                auto createEx=reinterpret_cast<ExFactory>(GetProcAddress(LoadLibraryW(L"d3d9.dll"),"Direct3DCreate9Ex"));
+                IDirect3D9Ex* result{};
+                check(createEx && SUCCEEDED(createEx(D3D_SDK_VERSION,&result)),"window-free Ex factory succeeds");
+                factory=result;
+            } else factory=Direct3DCreate9(D3D_SDK_VERSION);
+            check(factory && startupCalls==1,"graphics observer runs exactly once");
+            if (factory) factory->Release();
+        }
+        removeDisplayHooks(); return 0;
+    }
     Config settings{};
     if (argc > 1 && !strcmp(argv[1],"windowed")) settings.mode = Mode::Windowed;
     if (argc > 1 && !strcmp(argv[1],"fullscreen")) settings.mode = Mode::Fullscreen;

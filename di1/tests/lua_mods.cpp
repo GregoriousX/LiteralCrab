@@ -290,14 +290,16 @@ int main() {
             std::string(crabe::di1::characterPlaysetsPatch), "{}");
         freedom.addBuiltinPatch({"contains:ActorList"}, "character_actor_registry",
             std::string(crabe::di1::characterToyboxActorsPatch), "{}");
+        freedom.addBuiltinPatch({"monstersu_actors.lua", "contains:mu_randall_ps"}, "character_native_home_MonstersU",
+            std::string(crabe::di1::characterNativeActorHomesPatch), "{Playset='MonstersU'}");
         api.adapters.push_back({"RegisterPlaysetAvatars", &registerPlayset});
         CHECK(configure(api, std::move(freedom), &capture, false));
         const char* source =
             "ZoneList={Records={PlaysetProperties={"
-            "Incredibles={PlayableAvatars='AV_MrIncredible,AV_Dash',avatarSuffix='_PS',ComboPointsMeter='MeleeMeter'},"
-            "Pirates={PlayableAvatars='PIR_JackSparrow,PIR_Barbossa',avatarSuffix='_PS'},"
-            "RumpusRoom={PlayableAvatars='Mod_ExistingAvatar',WantToyBoxFX=true},"
-            "Custom={PlayableAvatars='Mod_Character',WantToyBoxFX=false}}}}";
+            "Incredibles={PlayableAvatars='AV_MrIncredible,AV_Dash',avatarSuffix='_PS',ComboPointsMeter='MeleeMeter',DisableVehicleToolSelect=true},"
+            "Pirates={PlayableAvatars='PIR_JackSparrow,PIR_Barbossa',avatarSuffix='_PS',DisableVehicleToolSelect=true},"
+            "RumpusRoom={PlayableAvatars='Mod_ExistingAvatar',WantToyBoxFX=true,DisableVehicleToolSelect=true},"
+            "Custom={PlayableAvatars='Mod_Character',WantToyBoxFX=false,DisableVehicleToolSelect=true}}}}";
         lua_State* bare = luaL_newstate();
         // Packed/unnamed data takes the content matcher used by the real zone list.
         CHECK(run(bare, source, "") == 0);
@@ -311,7 +313,12 @@ int main() {
         CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.WantToyBoxFX == true"));
         CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.WantBloatFX == true"));
         CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.WantBloatFX == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.ShowCarEnergyMeterUI == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.ShowCarEnergyMeterUI == true"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Custom.ShowCarEnergyMeterUI == nil"));
         CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Custom.WantToyBoxFX == false"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Incredibles.DisableVehicleToolSelect == false"));
+        CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.Pirates.DisableVehicleToolSelect == true and ZoneList.Records.PlaysetProperties.RumpusRoom.DisableVehicleToolSelect == true and ZoneList.Records.PlaysetProperties.Custom.DisableVehicleToolSelect == true"));
         CHECK(evaluate(bare, "ZoneList.Records.PlaysetProperties.RumpusRoom.PlayableAvatars == 'Mod_ExistingAvatar'"));
         CHECK(evaluate(bare, "LiteralCrab == nil and pairs == nil"));
         CHECK(characterPlaysets.foreign("PIR_JackSparrow", "Incredibles"));
@@ -341,6 +348,16 @@ int main() {
         lua_settop(bare, 0);
         CHECK(registeredPlaysets == 9);
         lua_close(bare);
+        // Native _PS records restore ownership omitted from the PC roster.
+        bare = luaL_newstate();
+        CHECK(run(bare, "Data={Type='ActorList',Records={{Type='Avatar',Name='mu_randall_ps'},{Type='Avatar',Name='mu_sullyinfinite_ps'},{Type='NPC',Name='StoryNPC_PS'}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(!characterPlaysets.foreign("MU_Randall", "MonstersU"));
+        CHECK(characterPlaysets.foreign("MU_Randall", "Pirates"));
+        CHECK(!characterPlaysets.foreign("MU_SullyInfinite", "MonstersU"));
+        CHECK(!characterPlaysets.registered("StoryNPC"));
+        CHECK(evaluate(bare, "Data.Records[1].Name == 'mu_randall_ps' and Data.Records[3].Type == 'NPC'"));
+        lua_close(bare);
     }
     {
         Index preloads;
@@ -358,13 +375,20 @@ int main() {
         lua_settop(bare, 0);
         CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Includes == 4"));
         CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[1] == 'Screen|HUD'"));
-        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 9"));
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 13"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[10] == 'Audio|RumpusVehicles.fev'"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[11] == 'Audio|RumpusCarBody.fev'"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[12] == 'Audio|VehicleEngine.fev'"));
+        CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[13] == 'Audio|CARS_TBScript.dlg'"));
         CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[3] == 'GameDB|GameDB/ToyBox/cust_Avatar__lua.lua|1|cust'"));
         CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Includes[1] == '_proxyavatar|Actor'"));
         CHECK(run(bare, "DataMap={Playset={_loadforallplaysets_={Files={'Screen|HUD','GAMEDB|GAMEDB/CORE/CUST_AVATAR__LUA.LUA|1|CUST'}}}}", "") == 0);
         lua_settop(bare, 0);
-        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 9"));
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 13"));
         CHECK(evaluate(bare, "DataMap.Playset._loadforallplaysets_.Files[2] == 'GAMEDB|GAMEDB/CORE/CUST_AVATAR__LUA.LUA|1|CUST'"));
+        CHECK(run(bare, "DataMap={Playset={_loadforallplaysets_={Files={'AUDIO|RUMPUSVEHICLES.FEV'}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "#DataMap.Playset._loadforallplaysets_.Files == 12 and DataMap.Playset._loadforallplaysets_.Files[1] == 'AUDIO|RUMPUSVEHICLES.FEV'"));
         const char* avatarMap = "DataMap={Include={"
             "avatarstats={Files={'GameDB|GameDB/AV_Perry/stats.lua|1|stats'}},"
             "perry_inc={Files={'Cho|Swing','CHO|SWING','Script|Behavior'},Includes={'shared|Include'}},"
@@ -381,6 +405,103 @@ int main() {
         CHECK(run(bare, "DataMap=DataMap -- avatarstats repeated", "") == 0);
         lua_settop(bare, 0);
         CHECK(evaluate(bare, "#DataMap.Include.literalcrab_avatar_fx.Files == 3"));
+        lua_close(bare);
+    }
+    {
+        Index targets;
+        targets.addBuiltinPatch({"lr_shoottargets.dnax", "contains:target_bullseye"}, "character_targets",
+            std::string(crabe::di1::characterTargetsPatch), "{}");
+        CHECK(configure(api, std::move(targets), &capture, false));
+        auto* bare = luaL_newstate();
+        const char* source = "DNA={AgentGadgets={Exploder={WeaponList='pstl|toma|modx',IgnoreWeaponList=false,"
+            "ExplodeOnMunitionImpact=true,ExplodeOnActorCollisionAtSpeed=-1,WeaponFactor=0.7},"
+            "Effects={FX={{Type='SOUND',Event='ExploderExplode',Name='target_bullseye'}}}},Reward='Native_Reward'}";
+        CHECK(run(bare, source, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.Exploder.WeaponList == 'pstl|toma|modx|lctg'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.Exploder.IgnoreWeaponList == false and DNA.AgentGadgets.Exploder.ExplodeOnActorCollisionAtSpeed == -1 and DNA.Reward == 'Native_Reward'"));
+        CHECK(run(bare, "Before=DNA.AgentGadgets.Exploder.WeaponList; DNA=DNA -- target_bullseye", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "Before == DNA.AgentGadgets.Exploder.WeaponList"));
+        for (const char* list : {"pstl|toma|abcd|efgh|ijkl|mnop|qrst|uvwx", "pstl|toma|Mod_Ammo",
+            "|pstl|toma", "pstl|toma|", "pstl||||||||||toma", "pstl|toma|xx\\000y"}) {
+            const auto full = std::string("DNA={AgentGadgets={Exploder={WeaponList='") + list +
+                "',IgnoreWeaponList=false,ExplodeOnMunitionImpact=true},Effects={FX={{Type='SOUND',Event='ExploderExplode',Name='target_bullseye'}}}}}";
+            CHECK(run(bare, full.c_str(), "") == 0);
+            lua_settop(bare, 0);
+            CHECK(evaluate(bare, (std::string("DNA.AgentGadgets.Exploder.WeaponList == '") + list + "'").c_str()));
+        }
+        CHECK(run(bare, "DNA={AgentGadgets={Exploder={WeaponList='pstl|toma|abcd|efgh|ijkl|mnop|qrst',IgnoreWeaponList=false,ExplodeOnMunitionImpact=true},Effects={FX={{Type='SOUND',Event='ExploderExplode',Name='target_bullseye'}}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.Exploder.WeaponList == 'pstl|toma|abcd|efgh|ijkl|mnop|qrst|lctg'"));
+        for (const char* weapon : {"lrcb", "lrgb", "pstl", "toma", "Mod_Ammo"}) {
+            const auto specialSource = std::string("DNA={AgentGadgets={Exploder={WeaponList='") + weapon +
+                "',IgnoreWeaponList=false,ExplodeOnMunitionImpact=true},Effects={FX={{Type='SOUND',Event='ExploderExplode',Name='target_bullseye'}}}}}";
+            CHECK(run(bare, specialSource.c_str(), "") == 0);
+            lua_settop(bare, 0);
+            CHECK(evaluate(bare, (std::string("DNA.AgentGadgets.Exploder.WeaponList == '") + weapon + "'").c_str()));
+        }
+        CHECK(run(bare, "DNA={AgentGadgets={Exploder={WeaponList='pstl|toma',IgnoreWeaponList=false,ExplodeOnMunitionImpact=true},Effects={FX={{Type='SOUND',Event='ExploderExplode',Name='Other_Barrel'}}}}}", "@lr_shoottargets.dnax") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.Exploder.WeaponList == 'pstl|toma'"));
+        CHECK(run(bare, "DNA={AgentGadgets={Exploder={WeaponList='pstl|toma',IgnoreWeaponList=true,ExplodeOnMunitionImpact=true},Effects={FX={{Type='SOUND',Event='ExploderExplode',Name='target_bullseye'}}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.Exploder.WeaponList == 'pstl|toma' and DNA.AgentGadgets.Exploder.IgnoreWeaponList == true"));
+        lua_close(bare);
+    }
+    {
+        Index mounts;
+        mounts.addBuiltinPatch({"contains:AvatarInteractionHud", "contains:SummonMount"}, "character_mounts",
+            std::string(crabe::di1::characterMountsPatch), "{}");
+        CHECK(configure(api, std::move(mounts), &capture, false));
+        auto* bare = luaL_newstate();
+        const char* source = "DNA={AgentGadgets={Avatar={},Rider={},AvatarInteractionHud={},"
+            "Identification={ActorTypeMask='AV_Perry',Name='PNF_PerryInfinite'},Health={MaxHealth=100}},"
+            "Components={CCDB_GameModelDefinition={DefaultPrebuilt='Avatar_Perry_Exclusive'}}}";
+        CHECK(run(bare, source, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.LR_HitchingPost[1].CreationKey == 'LR_Silver'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.LR_HitchingPost[1].Lock == 'RC_TOY_LR_Silver'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.LR_HitchingPost[2].Lock == 'RC_LR_Scout'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.LR_MuleHitchingPost[1].Lock == 'RC_LR_Mule'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.LR_ElephantHitchingPost[1].Lock == 'RC_LR_Elephant'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.TS_HitchingPost[1].CreationKey == 'AV_Bullseye'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.TS_AlienHorseHitchingPost[1].Lock == 'RC_ROBO_BULLSEYE'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.IN_HitchingPost[1].Lock == 'RC_IN_MRINC_CAR'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.IN_HelicopterHitchingPost[1].Lock == 'RC_TOY_SUPER_HERO_HELICOPTER'"));
+        CHECK(evaluate(bare, "#DNA.AgentGadgets.SummonMount.TypedMounts.MU_HitchingPost == 4 and DNA.AgentGadgets.SummonMount.TypedMounts.MU_HitchingPost[4].Lock == 'RC_MU_BIKE_RANDY'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.Health.MaxHealth == 100 and DNA.Components.CCDB_GameModelDefinition.DefaultPrebuilt == 'Avatar_Perry_Exclusive'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.Mounts == nil and LiteralCrab == nil and pairs == nil"));
+        CHECK(run(bare, "SavedMounts=DNA.AgentGadgets.SummonMount.TypedMounts; DNA=DNA -- AvatarInteractionHud", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "SavedMounts == DNA.AgentGadgets.SummonMount.TypedMounts and #SavedMounts.LR_HitchingPost == 2"));
+        const char* native = "DNA={AgentGadgets={Avatar={},Rider={},Identification={ActorTypeMask='PNF_Perry'},"
+            "SummonMount={Mounts={{CreationKey='LR_Scout',Lock='Original_Lock'}},"
+            "TypedMounts={TS_HitchingPost={{CreationKey='Mod_Mount',Lock='Custom_Lock'}}}}}}";
+        CHECK(run(bare, native, "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.Mounts[1].CreationKey == 'LR_Scout'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.LR_HitchingPost[1].Lock == 'Original_Lock'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.TS_HitchingPost[1].Lock == 'Custom_Lock'"));
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts.IN_HitchingPost[1].CreationKey == 'IN_MRINC_CAR'"));
+        CHECK(run(bare, "DNA={AgentGadgets={Avatar={},Rider={},Identification={ActorTypeMask='PNF_Perry'},SummonMount={Mounts={{CreationKey='Mod_Unknown',Lock='Mod_Lock'}}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts == nil and DNA.AgentGadgets.SummonMount.Mounts[1].Lock == 'Mod_Lock'"));
+        CHECK(run(bare, "DNA={AgentGadgets={Avatar={},Rider={},Identification={ActorTypeMask='PNF_Perry'},SummonMount={Mounts={{CreationKey='LR_Silver'},{CreationKey='IN_MRINC_CAR'}}}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts == nil and #DNA.AgentGadgets.SummonMount.Mounts == 2"));
+        for (const char* rejected : {
+            "DNA={AgentGadgets={Avatar={},Rider={},AvatarInteractionHud={},Identification={ActorTypeMask='StoryNPC'}}}",
+            "DNA={AgentGadgets={Avatar={},AvatarInteractionHud={},Identification={ActorTypeMask='PNF_Perry'}}}",
+            "DNA={AgentGadgets={Rider={},AvatarInteractionHud={},Identification={ActorTypeMask='PNF_Perry'}}}",
+            "DNA={AgentGadgets={Avatar={},Rider={},AvatarInteractionHud={},Identification={ActorTypeMask=false}}}"}) {
+            CHECK(run(bare, rejected, "") == 0);
+            lua_settop(bare, 0);
+            CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount == nil"));
+        }
+        CHECK(run(bare, "DNA={AgentGadgets={Avatar={},Rider={},Identification={ActorTypeMask='PNF_Perry'},SummonMount={TypedMounts=false}}}", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "DNA.AgentGadgets.SummonMount.TypedMounts == false"));
         lua_close(bare);
     }
     {
