@@ -3,6 +3,64 @@
 #include <string_view>
 
 namespace crabe::di1 {
+inline constexpr std::string_view characterResetFilterPatch = R"lua(
+local _, options, log = ...
+if type(Data) ~= "table" or Data.Package ~= "Core" or type(Data.Sets) ~= "table" then return end
+local actors
+for _, set in ipairs(Data.Sets) do
+    if type(set) == "table" and set.set == "ActorType" then
+        if actors then return end
+        actors = set
+    end
+end
+if not actors then return end
+local definitions, terminal, target, biped = {}, {}, nil, nil
+for _, name in ipairs({"masks", "filters", "metafilters"}) do
+    if type(actors[name]) ~= "table" then return end
+    for _, row in ipairs(actors[name]) do
+        if type(row) ~= "table" then return end
+        local key = name == "masks" and row.mask or row.filter
+        if type(key) ~= "string" or definitions[key] then return end
+        definitions[key] = row
+        terminal[key] = name == "masks"
+        if key == "PC_RespawnDeath" then target = row end
+        if key == "AV_AvatarBiped" then biped = row end
+    end
+end
+-- Only the known reset filter changes. Other Pirates avatar filters also gate
+-- missions, shops and NPC interactions and must keep their authored membership.
+local original = "AV_AvatarPirates|MG_Gibbs|MG_Pintel|MG_Ragetti|MG_TDalma|PC_PirateAny|Blockhead_PIR"
+if not target or target.UID ~= 3736 or target.desc ~= original or
+    not biped or biped.UID ~= 144 then return end
+local function expand(key, leaves, visiting, depth)
+    local row = definitions[key]
+    if not row or visiting[key] or depth > 32 then return false end
+    if terminal[key] then leaves[key] = true; return true end
+    if type(row.desc) ~= "string" or row.desc == "" or
+        string.find(row.desc, "[^%w_|]") or string.sub(row.desc, 1, 1) == "|" or
+        string.sub(row.desc, -1) == "|" or string.find(row.desc, "||", 1, true) then return false end
+    visiting[key] = true
+    for child in string.gmatch(row.desc, "[^|]+") do
+        if not expand(child, leaves, visiting, depth + 1) then return false end
+    end
+    visiting[key] = nil
+    return true
+end
+local existing, visitors = {}, {}
+if not expand("PC_RespawnDeath", existing, {}, 0) or
+    not expand("AV_AvatarBiped", visitors, {}, 0) then return end
+-- These shipped biped declarations are helpers/NPCs/intro models, not the
+-- supported visiting figures. Cars retain their distinct native reset policy.
+local excluded = {AV_Proxy=true, AV_Blockhead=true, AV_Spark=true, AV_Sparkman=true, AV_Frozone=true}
+local additions = {}
+for key in pairs(visitors) do
+    if not existing[key] and not excluded[key] then additions[#additions + 1] = key end
+end
+if #additions == 0 then return end
+table.sort(additions)
+target.desc = original .. "|" .. table.concat(additions, "|")
+log("APPLIED: Pirates reset filter includes visiting biped figures; original NPC membership retained")
+)lua";
 inline constexpr std::string_view characterTargetsPatch = R"lua(
 local _, options, log = ...
 local gadgets = type(DNA) == "table" and DNA.AgentGadgets

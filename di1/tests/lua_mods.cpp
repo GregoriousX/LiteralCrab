@@ -529,6 +529,56 @@ int main() {
         CHECK(evaluate(bare, "Data.Databases[1].Records.Prebuilt[1].UID == 123"));
         lua_close(bare);
     }
+    {
+        Index resets;
+        resets.addBuiltinPatch({"bitmasks.lua", "contains:PC_RespawnDeath"}, "character_reset_filter",
+            std::string(crabe::di1::characterResetFilterPatch), "{}");
+        CHECK(configure(api, std::move(resets), &capture, false));
+        auto* bare = luaL_newstate();
+        const std::string original = "AV_AvatarPirates|MG_Gibbs|MG_Pintel|MG_Ragetti|MG_TDalma|PC_PirateAny|Blockhead_PIR";
+        std::string source = "Data={Package='Core',Sets={{set='ActorType',properties={Keep='native'},masks={";
+        for (const char* name : {"AV_Barbossa", "AV_DavyJones", "AV_JackSparrow", "AV_MrIncredible", "AV_Zurg",
+            "MG_Gibbs", "MG_Pintel", "MG_Ragetti", "MG_TDalma", "PC_Clam", "Blockhead_PIR", "AV_McQueen",
+            "AV_Proxy", "AV_Frozone", "AV_Blockhead", "AV_Spark", "AV_Sparkman"})
+            source += std::string("{mask='") + name + "'},";
+        source += "},filters={{filter='AV_AvatarPirates',desc='AV_Barbossa|AV_DavyJones|AV_JackSparrow',UID=215},"
+            "{filter='PC_PirateAny',desc='PC_Clam'},"
+            "{filter='PC_RespawnDeath',UID=3736,desc='" + original + "'}},"
+            "metafilters={{filter='AV_AvatarBiped',UID=144,desc='AV_AvatarPirates|AV_MrIncredible|AV_Zurg|AV_Proxy|AV_Frozone|AV_Blockhead|AV_Spark|AV_Sparkman'}}}}};"
+            "SavedPirates=Data.Sets[1].filters[1]; SavedProperties=Data.Sets[1].properties; SavedMasks=Data.Sets[1].masks;";
+        CHECK(run(bare, source.c_str(), "@gamedb/core/bitmasks.lua") == 0);
+        lua_settop(bare, 0);
+        const std::string changed = original + "|AV_MrIncredible|AV_Zurg";
+        CHECK(evaluate(bare, ("Data.Sets[1].filters[3].desc == '" + changed + "'").c_str()));
+        CHECK(evaluate(bare, "Data.Sets[1].filters[1] == SavedPirates and SavedPirates.desc == 'AV_Barbossa|AV_DavyJones|AV_JackSparrow'"));
+        CHECK(evaluate(bare, "Data.Sets[1].masks == SavedMasks and #SavedMasks == 17 and Data.Sets[1].properties == SavedProperties and SavedProperties.Keep == 'native'"));
+        CHECK(run(bare, "Data=Data -- PC_RespawnDeath", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, ("Data.Sets[1].filters[3].desc == '" + changed + "'").c_str()));
+        // Fail closed before mutation for incompatible, ambiguous or cyclic input.
+        for (const char* edit : {
+            "Data.Package='Toybox'", "Data.Sets[1].filters[3].UID=99",
+            "Data.Sets[1].metafilters[1].UID=99",
+            "Data.Sets[1].metafilters[1].desc='AV_AvatarBiped'",
+            "Data.Sets[1].metafilters[1].desc='UnknownAvatar'",
+            "Data.Sets[1].metafilters[1].desc='AV_MrIncredible||AV_Zurg'",
+            "Data.Sets[1].metafilters[1].desc='AV_MrIncredible|~AV_Zurg'",
+            "Data.Sets[1].masks[18]={mask='AV_MrIncredible'}",
+            "Data.Sets[2]=Data.Sets[1]"}) {
+            CHECK(run(bare, (source + edit).c_str(), "@gamedb/core/bitmasks.lua") == 0);
+            lua_settop(bare, 0);
+            CHECK(evaluate(bare, ("Data.Sets[1].filters[3].desc == '" + original + "'").c_str()));
+        }
+        CHECK(run(bare, (source + "Data.Sets[1].filters[3].desc='CustomModFilter'").c_str(), "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "Data.Sets[1].filters[3].desc == 'CustomModFilter'"));
+        // Without the feature's built-in patch, the original membership remains.
+        CHECK(configure(api, Index{}, &capture, false));
+        CHECK(run(bare, source.c_str(), "@gamedb/core/bitmasks.lua") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, ("Data.Sets[1].filters[3].desc == '" + original + "'").c_str()));
+        lua_close(bare);
+    }
     lua_close(state);
     fs::remove_all(root);
     if (failures) return 1;

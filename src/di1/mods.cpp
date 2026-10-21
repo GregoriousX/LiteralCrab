@@ -168,6 +168,8 @@ bool installMods(HMODULE host) {
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
         if (characterFreedomActive()) {
+            index.addBuiltinPatch({"bitmasks.lua", "contains:PC_RespawnDeath"}, "character_reset_filter",
+                std::string(characterResetFilterPatch), "{}");
             index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "character_playsets", std::string(characterPlaysetsPatch), "{}");
             index.addBuiltinPatch({"contains:ActorList"}, "character_actor_registry", std::string(characterToyboxActorsPatch), "{}");
             for (const auto [file, marker, home] : {
