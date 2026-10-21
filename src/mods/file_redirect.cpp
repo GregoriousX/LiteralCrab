@@ -11,6 +11,7 @@ namespace {
     AssetIndex index;
     LogFunction log = [](const char*, ...) {};
     bool trace{};
+    bool traceAudio{};
     std::atomic<unsigned> audioOpens{};
 
     using CreateFileAFn = HANDLE(WINAPI*)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
@@ -54,7 +55,8 @@ namespace {
         const bool dialogue = resolved.key().starts_with("sound/dialog/");
         // Native requests reveal the selected audio locale even when startup
         // language forcing is off or the player changes language in the menu.
-        const bool audio = dialogue && opening && resolved.key().substr(13).find('/') != std::string_view::npos;
+        const bool audio = (trace || traceAudio) && dialogue && opening &&
+            resolved.key().substr(13).find('/') != std::string_view::npos;
         if (!trace && !(resolved.target && !success) && !(audio && (!success || audioOpens.fetch_add(1) < 2048))) return;
         const auto destination = resolved.target ? resolved.target->c_str() : resolved.directory ? L"<mod directory>" : L"<native path>";
         if constexpr (sizeof(Char) == sizeof(char))
@@ -154,10 +156,11 @@ bool readAssetMember(const char* name, std::string& data) {
 const std::wstring* redirectedAsset(const wchar_t* fileName) noexcept { return lookup(fileName); }
 void setAssetIndexForTest(AssetIndex loaded) { index = std::move(loaded); }
 
-bool installFileRedirect(AssetIndex loaded, LogFunction logger, bool traceFiles) {
+bool installFileRedirect(AssetIndex loaded, LogFunction logger, bool traceFiles, bool traceAudioFiles) {
     index = std::move(loaded);
     log = logger;
     trace = traceFiles;
+    traceAudio = traceAudioFiles;
     audioOpens = 0;
     if (index.redirects.empty()) return true;
     const HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");

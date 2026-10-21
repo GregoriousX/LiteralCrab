@@ -128,11 +128,11 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         for (const auto& asset : assets.redirects)
             if (asset.path.starts_with("sound/") && asset.path.ends_with(".fsb")) { audioBanks = true; break; }
         // The index is kept first: the loader hook asks it for files as soon as it is enabled.
-        if (!mods::installFileRedirect(std::move(assets), &log, trace) && redirects)
+        if (!mods::installFileRedirect(std::move(assets), &log, trace, config().traceAudioBanks) && redirects)
             messages.push_back("Mods: files the game opens from disk cannot be replaced; those stay original.");
         if ((members || trace || config().traceCharacterFreedom) && !installAssetLoader(host, members ? &mods::readAssetMember : nullptr, trace) && members)
             messages.push_back("Mods: files inside the game's archives cannot be replaced on this build.");
-        if (audioBanks && !installAudioBankTrace(host))
+        if (audioBanks && config().traceAudioBanks && !installAudioBankTrace(host))
             messages.push_back("Mods: native audio-bank diagnostics unavailable on this profile.");
         if (redirects || members)
             messages.push_back("Mods: " + std::to_string(redirects) + " file(s) replaced on disk, " + std::to_string(members) +

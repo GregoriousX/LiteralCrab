@@ -57,6 +57,7 @@ void removeAudioBankTrace() {
     created = 0;
 }
 bool installAudioBankTrace(HMODULE host) {
+    if (!config().traceAudioBanks) return true;
     if (created) return true;
     const auto base = reinterpret_cast<std::uintptr_t>(host);
     if (!codeMatches(base + bankRva, "81 EC 20 01 00 00 8B 84 24 28 01 00 00 53 55 56 57") ||

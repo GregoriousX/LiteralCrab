@@ -140,7 +140,7 @@ namespace {
                     const float displayAspect = physicalAspect(actual);
                     const float corrected = correctVerticalFov(degrees, actual, reference, caller == 0xD7FBB0,displayAspect);
                     static thread_local float lastAspect{};
-                    if (std::abs(lastAspect - displayAspect) > 0.001f) {
+                    if (config().diagnostics && std::abs(lastAspect - displayAspect) > 0.001f) {
                         log("Projection FOV: target %dx%d; render aspect %.5f; display aspect %.5f; native %.3f -> %.3f degrees; reference %.5f.",
                             width,height,actual,displayAspect,degrees,corrected,reference);
                         lastAspect = displayAspect;

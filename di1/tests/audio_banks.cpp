@@ -123,6 +123,12 @@ int wmain(int argc, wchar_t** argv) {
     const auto restore = [&](unsigned rva, std::size_t size) {
         CHECK(write(base + rva, snapshot.data() + rva - codeRva, size));
     };
+    // An available native profile or mod-supplied bank must not opt into traces.
+    // This succeeds before MinHook initialization and leaves all native bytes.
+    CHECK(!config().traceAudioBanks);
+    CHECK(installAudioBankTrace(host));
+    CHECK(unchanged());
+    const_cast<Config&>(config()).traceAudioBanks = true;
     CHECK(MH_Initialize() == MH_OK);
     void* logTrampoline{};
     const auto logTarget = reinterpret_cast<void*>(&crabe::di1::log);

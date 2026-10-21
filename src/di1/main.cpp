@@ -66,11 +66,7 @@ namespace {
         HMODULE pinned{};
         if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&initialize), &pinned)) {
-            crabe::di1::installDiagnostics(host, self, crabe::di1::pluginDirectory(), crabe::di1::config().exceptionDiagnostics);
-            if (crabe::di1::config().crashReports) {
-                crabe::di1::armAutomaticCapture(self, crabe::di1::pluginDirectory());
-                crabe::di1::setGraphicsStartupObserver(&crabe::di1::startAutomaticCapture);
-            }
+            crabe::di1::installDiagnosticStartup(host, self, crabe::di1::pluginDirectory(), crabe::di1::config());
         }
         else crabe::di1::log("Diagnostics: observer disabled because the ASI could not be pinned.");
         crabe::di1::log("READY: DI1 display hooks installed before engine startup.");

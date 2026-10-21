@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "di1/diagnostics.hpp"
 #include "di1/common.hpp"
+#include "di1/auto_capture.hpp"
+#include "di1/display.hpp"
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -224,5 +226,14 @@ void installDiagnostics(HMODULE host, HMODULE plugin, const wchar_t* directory, 
     count = GetModuleFileNameW(plugin, path, _countof(path));
     if (count && count < _countof(path)) identities(path, "ASI");
     identities((std::wstring(directory) + L"LiteralCrab.ini").c_str(), "INI");
+}
+void installDiagnosticStartup(HMODULE host, HMODULE plugin, const wchar_t* directory, const Config& options) {
+    if (!options.diagnostics && !options.exceptionDiagnostics && !options.crashReports &&
+        !options.traceAudioBanks && !options.modTrace && !options.traceCharacterFreedom) return;
+    installDiagnostics(host, plugin, directory, options.exceptionDiagnostics);
+    if (options.crashReports) {
+        armAutomaticCapture(plugin, directory);
+        setGraphicsStartupObserver(&startAutomaticCapture);
+    }
 }
 }

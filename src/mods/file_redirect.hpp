@@ -9,7 +9,8 @@ namespace crabe::mods {
 using LogFunction = void (*)(const char* format, ...);
 // Call once; the index is never modified afterwards. File hooks are installed only when the
 // index has redirects. Returns false and leaves nothing hooked on failure. Requires MinHook.
-bool installFileRedirect(AssetIndex index, LogFunction log, bool trace);
+// Successful dialogue opens are quiet unless either trace option is explicit.
+bool installFileRedirect(AssetIndex index, LogFunction log, bool trace, bool traceAudioFiles = false);
 // The engine-loader provider: the mod's data for a request name. Thread-safe.
 bool readAssetMember(const char* name, std::string& data);
 // The replacement for a file name, or null. Exposed for tests.

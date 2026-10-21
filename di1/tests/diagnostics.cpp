@@ -7,7 +7,14 @@
 #include <iterator>
 #include <vector>
 
-namespace crabe::di1 { void log(const char*, ...) {} }
+namespace crabe::di1 {
+void log(const char*, ...) {}
+// This target exercises the observer itself; the startup/config target uses
+// the real capture implementation and checks its deferred worker lifecycle.
+void armAutomaticCapture(HMODULE, const wchar_t*) {}
+void startAutomaticCapture() noexcept {}
+void setGraphicsStartupObserver(void (*)()) {}
+}
 namespace {
 unsigned failures{};
 #define CHECK(value) do { if (!(value)) { std::printf("FAIL line %d: %s\n", __LINE__, #value); ++failures; } } while (0)

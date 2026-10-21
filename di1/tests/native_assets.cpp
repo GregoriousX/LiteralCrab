@@ -166,7 +166,10 @@ int main(int argc, char** argv) {
     const auto enabled = Index::load(mods.wstring(), messages);
     auto index = AssetIndex::build(assets.wstring(), (mods / ".cache").wstring(), enabled.mods, messages);
     CHECK(MH_Initialize() == MH_OK);
-    CHECK(installFileRedirect(std::move(index), logger, initial == "PLP"));
+    // Cold-start processes cover full file trace, audio-only opt-in, and the
+    // release default. All three must deliver identical assets and API results.
+    const bool traceFiles = initial == "PLP", traceAudio = initial == "ARS";
+    CHECK(installFileRedirect(std::move(index), logger, traceFiles, traceAudio));
     CHECK(read(assets / "sound/dialog" / initial / "voice.fsb", false) == initial + " bank");
     // Switch native request locale in the same process, then repeat each locale
     // as the initial request in separate CTest processes for cold-start coverage.
@@ -184,9 +187,10 @@ int main(int argc, char** argv) {
         CHECK(info.dwFileAttributes == FILE_ATTRIBUTE_DIRECTORY);
         CHECK(GetFileAttributesExA((directory / "voice.fsb").string().c_str(), GetFileExInfoStandard, &info));
         CHECK(info.nFileSizeLow == std::string(locale).size() + 5);
-        CHECK(contains(std::string("native audio language=") + (std::string(locale) == "PLP" ? "plp" : std::string(locale) == "RUR" ? "rur" : "ars")));
+        CHECK(contains(std::string("native audio language=") + (std::string(locale) == "PLP" ? "plp" : std::string(locale) == "RUR" ? "rur" : "ars")) == (traceFiles || traceAudio));
     }
     CHECK(read(assets / custom, true) == "custom character resource");
+    CHECK(contains("new-format.custom") == traceFiles);
     for (bool wide : {false, true}) {
         SetLastError(1234);
         const auto path = assets / custom;
@@ -201,7 +205,8 @@ int main(int argc, char** argv) {
     CHECK(GetFileAttributesW((assets / "sound/dialog/RU").c_str()) == INVALID_FILE_ATTRIBUTES);
     CHECK(read(assets / "sound/dialog/ENU/native.fsb", true) == "factory");
     CHECK(GetFileAttributesW((assets / "sound/dialog/ENU").c_str()) != INVALID_FILE_ATTRIBUTES);
-    CHECK(contains("resolved=<native path>"));
+    CHECK(contains("resolved=<native path>") == (traceFiles || traceAudio));
+    if (!traceFiles && !traceAudio) CHECK(logs.empty());
     const auto gone = mods / "10_first/assets/characters/visitor/vanishing.custom";
     CHECK(DeleteFileW(gone.c_str()));
     const auto missing = CreateFileW((assets / "characters/visitor/vanishing.custom").c_str(), GENERIC_READ,
@@ -214,7 +219,8 @@ int main(int argc, char** argv) {
         FILE_SHARE_READ, nullptr, OPEN_ALWAYS, 0, nullptr);
     CHECK(writable == INVALID_HANDLE_VALUE);
     CHECK(read(mods / "10_first/assets" / custom, true) == "custom character resource");
-    CHECK(contains("10_first") && contains("20_later"));
+    CHECK(contains("10_first")); // Redirected failure remains visible in release.
+    CHECK(contains("20_later") == (traceFiles || traceAudio));
     CHECK(MH_DisableHook(MH_ALL_HOOKS) == MH_OK);
     CHECK(MH_Uninitialize() == MH_OK);
     setAssetIndexForTest({});
