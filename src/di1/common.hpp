@@ -39,6 +39,8 @@ struct Config {
     unsigned toyBoxLimitScale = 1;
     // Let every character play in every play set (needs mods enabled for ownership/FX data).
     bool charactersInAnyPlayset = false;
+    // Widen tool world filters only; native unlocks and suppression still apply.
+    bool toolsInAnyPlayset = false;
     bool traceCharacterFreedom = false;
     // Temporary character-freedom testing aid; native rewards remain unchanged at 1.
     unsigned testExperienceMultiplier = 1;

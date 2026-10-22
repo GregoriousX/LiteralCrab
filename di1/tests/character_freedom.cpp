@@ -41,6 +41,26 @@ bool testUnlockedResult{};
 unsigned char* testRefreshEntry{};
 unsigned observedRefreshCalls{};
 bool testProgressionUnlocked = true, observedRefreshForced{};
+bool testNativeToolSuppressed{};
+unsigned observedUpgradeChecks{};
+const char* testToolGroup = "props";
+const char* testToolName = "PROP_JETPACK";
+const char* testToolUpgrade = "UP_JetPack";
+const char* __fastcall captureToolParameter(void*, void*, void*, unsigned parameter) {
+    if (parameter == 10) return testToolName;
+    if (parameter == 11) return testToolUpgrade;
+    if (parameter == 12) return testToolGroup;
+    return nullptr;
+}
+bool __fastcall captureToolBool(void*, void*, void*, unsigned parameter) { return parameter == 1; }
+void* __fastcall captureUpgradeRecord(void*, void*, const char* name, unsigned, unsigned) {
+    return name && !std::strcmp(name, testToolUpgrade) ? &observedUpgradeChecks : nullptr;
+}
+bool __fastcall captureUpgradeState(void*, void*, unsigned, unsigned, unsigned) {
+    ++observedUpgradeChecks;
+    return testProgressionUnlocked;
+}
+bool __fastcall captureNativeSuppression(void*, void*) { return testNativeToolSuppressed; }
 int(__thiscall* testRefreshWorld)(void*, const void*){};
 struct ProjectileVector { float x, y, z; };
 ProjectileVector observedProjectilePosition{};
@@ -234,6 +254,18 @@ int wmain(int argc, wchar_t** argv) {
     using crabe::di1::CharacterPlaysets;
     int failures = 0;
 #define CHECK(value) do { if (!(value)) { std::printf("FAIL line %d: %s\n", __LINE__, #value); ++failures; } } while (0)
+    CHECK(std::string_view(crabe::di1::scareToolLabelKey("ITEM_LITERALCRAB_MEGAPHONE_name")) == "ITEM_MIKE_name");
+    for (const char* key : {"ITEM_LITERALCRAB_MEGAPHONE", "ITEM_LITERALCRAB_MEGAPHONE_desc", "ITEM_MIKE_name", "PROP_INVISIBILITYPACK_name"})
+        CHECK(crabe::di1::scareToolLabelKey(key) == key);
+    CHECK(crabe::di1::scareToolLabelKey(nullptr) == nullptr);
+    CHECK(crabe::di1::scareToolPoseMessage("LCRPose", 1, 2, "ITEM_LITERALCRAB_MEGAPHONE"));
+    CHECK(!crabe::di1::scareToolPoseMessage("ScareAttack", 1, 2, "ITEM_LITERALCRAB_MEGAPHONE"));
+    CHECK(!crabe::di1::scareToolPoseMessage("LCRPose", 1, 1, "ITEM_LITERALCRAB_MEGAPHONE"));
+    CHECK(!crabe::di1::scareToolPoseMessage("LCRPose", 0, 2, "ITEM_LITERALCRAB_MEGAPHONE"));
+    CHECK(!crabe::di1::scareToolPoseMessage("LCRPose", 1, 0, "ITEM_LITERALCRAB_MEGAPHONE"));
+    CHECK(!crabe::di1::scareToolPoseMessage("LCRPose", 1, 2, "ITEM_MIKE"));
+    CHECK(!crabe::di1::scareToolPoseMessage(nullptr, 1, 2, "ITEM_LITERALCRAB_MEGAPHONE"));
+    CHECK(!crabe::di1::scareToolPoseMessage("LCRPose", 1, 2, nullptr));
     // Every combination of retained directory rows, including empty/identity,
     // keeps recipes/envelopes and row order intact with no temporary allocation.
     const auto originalParticles = particleFixture();
@@ -370,6 +402,27 @@ int wmain(int argc, wchar_t** argv) {
     CHECK(!ownership.foreign("INTRO_Spark", "Pirates"));
     CHECK(!ownership.foreign("Mod_CustomAvatar", "Pirates"));
     CHECK(!ownership.foreign("AV_Buzz_UnknownVariant", "Incredibles"));
+    CHECK(ownership.foreign("AV_MrIncredible_PS", "Pirates"));
+    CHECK(!ownership.foreign("AV_MrIncredible_PS", "Incredibles"));
+    CHECK(!std::strcmp(ownership.visitorBaseActor("aV_mRiNcReDiBlE_pS", "Pirates"), "AV_MrIncredible"));
+    for (const char* home : {"Incredibles", "RumpusRoom", "Miscellaneous", ""})
+        CHECK(ownership.visitorBaseActor("AV_MrIncredible_PS", home) == nullptr);
+    for (const char* unknown : {"Mod_Unknown_PS", "AV_MrIncredible_PS_PS", "AV_MrIncredible_PS_Mini",
+        "AV_MrIncredibleInfinite_PS", "AV_MrIncredible", "_PS", ""})
+        CHECK(ownership.visitorBaseActor(unknown, "Pirates") == nullptr);
+    ownership.add("RumpusRoom", "AV_MrIncredibleInfinite");
+    CHECK(!std::strcmp(ownership.visitorBaseActor("AV_MrIncredibleInfinite_PS", "Pirates"), "AV_MrIncredibleInfinite"));
+    CHECK(ownership.visitorBaseActor("AV_MrIncredibleInfinite_PS", "Incredibles") == nullptr);
+    CharacterPlaysets lateBase;
+    lateBase.add("MonstersU", "MU_Randall_PS");
+    CHECK(lateBase.visitorBaseActor("MU_Randall_PS", "Pirates") == nullptr);
+    lateBase.add("RumpusRoom", "MU_Randall");
+    const auto* stableKey = lateBase.visitorBaseActor("MU_Randall_PS", "Pirates");
+    CHECK(stableKey && !std::strcmp(stableKey, "MU_Randall"));
+    for (unsigned i = 0; i < 1024; ++i) lateBase.add("RumpusRoom", "Custom_" + std::to_string(i));
+    CHECK(lateBase.visitorBaseActor("MU_Randall_PS", "Pirates") == stableKey);
+    CHECK(!std::strcmp(stableKey, "MU_Randall"));
+    CHECK(lateBase.visitorBaseActor("MU_Randall_PS", "MonstersU") == nullptr);
     // Reloading data must not change the home of a native avatar or break a mod's own avatar.
     ownership.add("ToyStoryInSpace", " AV_Buzz ,AV_Jessie,,AV_Woody,Mod_CustomAvatar ");
     CHECK(!ownership.foreign("Mod_CustomAvatar", "ToyStoryInSpace"));
@@ -399,6 +452,11 @@ int wmain(int argc, wchar_t** argv) {
                 CHECK(crabe::di1::installCharacterFreedom(image, options));
                 CHECK(!crabe::di1::characterFreedomActive());
                 CHECK(!std::memcmp(bytes, snapshot.data(), snapshot.size()));
+                options.toolsInAnyPlayset = true;
+                CHECK(crabe::di1::installCharacterFreedom(image, options));
+                CHECK(!crabe::di1::characterFreedomActive()); // Character option is required.
+                CHECK(!std::memcmp(bytes, snapshot.data(), snapshot.size()));
+                options.toolsInAnyPlayset = false;
                 options.charactersInAnyPlayset = true;
                 CHECK(crabe::di1::installCharacterFreedom(image, options));
                 CHECK(crabe::di1::characterFreedomActive());
@@ -442,7 +500,21 @@ int wmain(int argc, wchar_t** argv) {
                 const char* actor = "av_mrincredible";
                 variant(nullptr, &actor);
                 CHECK(!std::strcmp(actor, "av_mrincredible"));
+                // The actual detour must normalize a preselected foreign PS key,
+                // including after repeated registrations; input strings are read-only.
+                actor = "av_mrincredible_PS";
+                variant(nullptr, &actor);
+                CHECK(!std::strcmp(actor, "AV_MrIncredible"));
+                const auto* stableActor = actor;
+                actor = "AV_MrIncredibleInfinite_PS";
+                variant(nullptr, &actor);
+                CHECK(actor == nativeMarker); // no exact crystal key registered yet
+                actor = "mod_unknown_PS";
+                variant(nullptr, &actor);
+                CHECK(actor == nativeMarker);
+                CHECK(!std::strcmp(stableActor, "AV_MrIncredible"));
                 testCurrentPlayset = "Incredibles";
+                actor = "AV_MrIncredible_PS";
                 variant(nullptr, &actor);
                 CHECK(actor == nativeMarker);
                 testCurrentPlayset = "RumpusRoom";
@@ -999,6 +1071,215 @@ int wmain(int argc, wchar_t** argv) {
                 CHECK(replaceCode(base + 0xAFE4B0, snapshot.data() + 0xAFE4B0 - code->VirtualAddress, sizeof(getString)));
                 crabe::di1::removeCharacterFreedom();
                 CHECK(!std::memcmp(bytes, snapshot.data(), snapshot.size()));
+                // Exercise the ORIGINAL GetTool(false) body with the optional
+                // shared-tool policy. Stub only engine services: upgrade lookup,
+                // avatar parameter resolution, player/world lookup and the final
+                // notification. Both prerequisite branches and both world calls
+                // execute their actual shipped x86 instructions.
+                for (const bool shared : {false, true}) {
+                    options.toolsInAnyPlayset = shared;
+                    CHECK(crabe::di1::installCharacterFreedom(image, options));
+                    CHECK(base[0xC19FD0] == 0xE9); // Story flintlock also refreshes with shared gear OFF.
+                    jump(0xC1D206, reinterpret_cast<std::uintptr_t>(&captureWorld));
+                    jump(0xAE8070, reinterpret_cast<std::uintptr_t>(&capturePlayer));
+                    jump(0xB70890, reinterpret_cast<std::uintptr_t>(&captureToolParameter));
+                    jump(0xB70830, reinterpret_cast<std::uintptr_t>(&captureToolBool));
+                    jump(0xC54D70, reinterpret_cast<std::uintptr_t>(&captureUpgradeRecord));
+                    jump(0xC5C3F0, reinterpret_cast<std::uintptr_t>(&captureUpgradeState));
+                    jump(0xC19E10, reinterpret_cast<std::uintptr_t>(&captureNativeSuppression));
+                    CHECK(replaceCode(base + 0xAFE4B0, getString, sizeof(getString)));
+                    // Script notification is a three-argument thiscall, unrelated
+                    // to progression. Do not invoke the engine event bus in a test.
+                    const unsigned char skipNotification[] = {0xC2, 12, 0};
+                    CHECK(replaceCode(base + 0x278980, skipNotification, sizeof(skipNotification)));
+                    auto** infoSlot = *reinterpret_cast<void***>(base + 0xC1E2C5);
+                    const auto savedInfo = *infoSlot;
+                    unsigned char info[0x58]{};
+                    unsigned row[19]{};
+                    row[0] = 10; row[2] = 12; row[3] = 11;
+                    row[4] = reinterpret_cast<unsigned>(&zones);
+                    row[7] = row[11] = ~0u; row[18] = 1;
+                    *reinterpret_cast<void**>(info + 0x54) = row;
+                    *infoSlot = info;
+                    *playerSlot = testManager; *managerSlot = testManager;
+                    testTools[0x38C] = 1;
+                    testWorldResult = 0;
+                    const auto nativeRefresh = reinterpret_cast<void(__thiscall*)(void*, bool)>(base + 0xC1E280);
+                    const auto prepare = [&](bool resolving) {
+                        std::memset(toolParent, 0, sizeof(toolParent));
+                        *reinterpret_cast<void**>(toolParent) = testTools;
+                        *reinterpret_cast<const char**>(toolParent + 0x14) = testToolName;
+                        *reinterpret_cast<const char**>(toolParent + 0x20) = testToolUpgrade;
+                        *reinterpret_cast<void**>(toolParent + 0x24) = &zones;
+                        *reinterpret_cast<unsigned*>(toolParent + 0x30) = resolving ? 0u : ~0u;
+                        *reinterpret_cast<unsigned*>(toolParent + 0x3C) = ~0u;
+                        *reinterpret_cast<unsigned*>(toolParent + 0x5C) = 1;
+                    };
+                    // The frontend enumerates GetNextTool directly, without an
+                    // IsToolUnlocked query. Reproduce construction before player
+                    // registration, then open the actual native inventory list.
+                    const auto nextTool = reinterpret_cast<int(__thiscall*)(void*, const char*, int, void**)>(base + 0xC19FD0);
+                    *reinterpret_cast<void***>(testTools + 0x2BC) = entries;
+                    *reinterpret_cast<unsigned*>(testTools + 0x2C0) = 1;
+                    unsigned menuCases = 0;
+                    for (const char* group : {"props", "items"})
+                        for (const char* world : {"Cars", "Incredibles", "LoneRanger", "MonstersU", "Pirates", "ToyStoryInSpace"})
+                            for (int player = 0; player < 4; ++player)
+                                for (const bool unlocked : {false, true}) for (const bool resolving : {false, true}) {
+                                    testToolGroup = group;
+                                    *reinterpret_cast<const char**>(testTools + 0x2EC) = group;
+                                    testCurrentPlayset = world; testProgressionUnlocked = unlocked;
+                                    testPlayerIndex = -1; prepare(resolving);
+                                    *reinterpret_cast<const char**>(toolParent + 0x1C) = group;
+                                    toolParent[0x68] = 1;
+                                    nativeRefresh(toolParent, false);
+                                    CHECK(!(toolParent[0x78] & 4));
+                                    testPlayerIndex = player;
+                                    void* selected{};
+                                    CHECK(nextTool(testTools, group, 0, &selected) == (shared && unlocked ? 1 : -1));
+                                    CHECK(bool(selected) == (shared && unlocked));
+                                    if (selected) {
+                                        CHECK(selected == toolParent + 0x14);
+                                        CHECK(!std::strcmp(*static_cast<const char**>(selected), "PROP_JETPACK"));
+                                        CHECK(nextTool(testTools, group, 1, &selected) == -1);
+                                        CHECK(selected == nullptr);
+                                    }
+                                    ++menuCases;
+                                }
+                    CHECK(menuCases == 192);
+                    testToolGroup = "props";
+                    *reinterpret_cast<const char**>(testTools + 0x2EC) = testToolGroup;
+                    for (unsigned exclusion = 0; exclusion < 6; ++exclusion) {
+                        testCurrentPlayset = exclusion == 0 ? "RumpusRoom" : "Incredibles";
+                        testPlayerIndex = exclusion == 1 ? -1 : 0;
+                        testProgressionUnlocked = true;
+                        prepare(false);
+                        *reinterpret_cast<const char**>(toolParent + 0x1C) = exclusion == 4 ? "other-group" : testToolGroup;
+                        toolParent[0x68] = 1;
+                        if (exclusion == 2) toolParent[0x78] = 1; // Suppressed.
+                        if (exclusion == 3) testTools[0x38C] = 0; // Not initialized.
+                        void* selected{};
+                        observedUpgradeChecks = 0;
+                        CHECK(nextTool(testTools, testToolGroup, exclusion == 5 ? 1 : 0, &selected) == -1);
+                        CHECK(selected == nullptr);
+                        if (exclusion != 4) CHECK(observedUpgradeChecks == 0);
+                        testTools[0x38C] = 1;
+                    }
+                    std::printf("Native inventory enumeration: shared=%d, %u cases passed\n", shared, menuCases);
+                    // Native Pirates figures have the flintlock innately. Visitors
+                    // gain that same story equipment only inside Pirates, without
+                    // unlocking the upgrade or changing award bits/other equipment.
+                    testToolName = "ITEM_FLINTLOCK"; testToolUpgrade = "UP_FlintLock";
+                    testToolGroup = "items";
+                    *reinterpret_cast<const char**>(testTools + 0x2EC) = testToolGroup;
+                    unsigned storyCases = 0;
+                    for (const char* world : {"Cars", "Incredibles", "LoneRanger", "MonstersU", "Pirates", "ToyStoryInSpace"})
+                        for (int player = 0; player < 4; ++player) for (const bool unlocked : {false, true}) {
+                            testCurrentPlayset = world; testPlayerIndex = player;
+                            testProgressionUnlocked = unlocked;
+                            const bool pirates = !std::strcmp(world, "Pirates");
+                            testWorldResult = pirates ? 1 : 0;
+                            prepare(false);
+                            *reinterpret_cast<const char**>(toolParent + 0x1C) = testToolGroup;
+                            void* selected{};
+                            const bool allowed = pirates || (shared && unlocked);
+                            CHECK(nextTool(testTools, testToolGroup, 0, &selected) == (allowed ? 1 : -1));
+                            CHECK(bool(selected) == allowed);
+                            CHECK(*reinterpret_cast<const char**>(toolParent + 0x20) == testToolUpgrade);
+                            CHECK(!(toolParent[0x78] & 2)); // No persistent/runtime tool award.
+                            ++storyCases;
+                        }
+                    testCurrentPlayset = "Pirates"; testWorldResult = 1; testPlayerIndex = 0;
+                    testProgressionUnlocked = false;
+                    for (const bool suppressed : {false, true}) {
+                        prepare(false); toolParent[0x78] = suppressed ? 1 : 0;
+                        nativeRefresh(toolParent, false);
+                        CHECK(bool(toolParent[0x78] & 4) == !suppressed);
+                        CHECK(*reinterpret_cast<const char**>(toolParent + 0x20) == testToolUpgrade);
+                    }
+                    for (int player : {-1, 4}) {
+                        testPlayerIndex = player; prepare(false); nativeRefresh(toolParent, false);
+                        CHECK(!(toolParent[0x78] & 4));
+                    }
+                    testPlayerIndex = 0;
+                    testToolName = "ITEM_TOYFLINTLOCK";
+                    prepare(false); nativeRefresh(toolParent, false);
+                    CHECK(!(toolParent[0x78] & 4)); // The Toy Box upgrade remains earned.
+                    testToolName = "ITEM_PISTOL";
+                    prepare(false); nativeRefresh(toolParent, false);
+                    CHECK(!(toolParent[0x78] & 4)); // No broad gun/ability prerequisite bypass.
+                    testToolName = "ITEM_FLINTLOCK";
+                    prepare(false); toolParent[0x78] = 2;
+                    nativeRefresh(toolParent, false);
+                    CHECK((toolParent[0x78] & 6) == 6); // Keep a preexisting native award.
+                    CHECK(*reinterpret_cast<const char**>(toolParent + 0x20) == testToolUpgrade);
+                    testToolName = "PROP_JETPACK"; testToolUpgrade = "UP_JetPack";
+                    testToolGroup = "props"; testWorldResult = 0;
+                    std::printf("Native Pirates story flintlock: shared=%d, %u cases passed\n", shared, storyCases);
+                    for (const char* world : {"Cars", "Incredibles", "LoneRanger", "MonstersU", "Pirates", "ToyStoryInSpace"})
+                        for (int player = 0; player < 4; ++player)
+                            for (const bool unlocked : {false, true}) for (const bool resolving : {false, true}) {
+                                testCurrentPlayset = world; testPlayerIndex = player;
+                                testProgressionUnlocked = unlocked; observedUpgradeChecks = 0;
+                                prepare(resolving);
+                                nativeRefresh(toolParent, false);
+                                CHECK(bool(toolParent[0x78] & 4) == (shared && unlocked));
+                                if (shared && unlocked && resolving)
+                                    CHECK(*reinterpret_cast<unsigned*>(toolParent + 0x30) == ~0u);
+                                CHECK(observedUpgradeChecks != 0);
+                                CHECK(!std::strcmp(*reinterpret_cast<const char**>(toolParent + 0x20), "UP_JetPack"));
+                            }
+                    testCurrentPlayset = "Pirates"; testPlayerIndex = 0;
+                    testProgressionUnlocked = true;
+                    testNativeToolSuppressed = true;
+                    prepare(false); nativeRefresh(toolParent, false);
+                    CHECK(!(toolParent[0x78] & 4));
+                    testNativeToolSuppressed = false;
+                    for (const char* world : {"RumpusRoom", "Miscellaneous", "Mod_CustomWorld", ""}) {
+                        testCurrentPlayset = world;
+                        prepare(false); nativeRefresh(toolParent, false);
+                        CHECK(!(toolParent[0x78] & 4));
+                    }
+                    testCurrentPlayset = "Pirates";
+                    for (int player : {-1, 4}) {
+                        testPlayerIndex = player;
+                        prepare(false); nativeRefresh(toolParent, false);
+                        CHECK(!(toolParent[0x78] & 4));
+                    }
+                    testPlayerIndex = 0;
+                    // Cached failed availability must also re-evaluate shared
+                    // gear through native GetTool(false), with its UP check intact.
+                    if (shared) {
+                        CHECK(replaceCode(base + 0xC1A605, unlockedStub, sizeof(unlockedStub)));
+                        *reinterpret_cast<void***>(testTools + 0x2BC) = entries;
+                        *reinterpret_cast<unsigned*>(testTools + 0x2C0) = 1;
+                        testRefreshEntry = toolParent;
+                        for (const bool unlocked : {false, true}) {
+                            testProgressionUnlocked = unlocked;
+                            prepare(false);
+                            CHECK(getUnlocked(testTools, "PROP_JETPACK") == unlocked);
+                            CHECK(bool(toolParent[0x78] & 4) == unlocked);
+                        }
+                        testRefreshEntry = nullptr;
+                        CHECK(replaceCode(base + 0xC1A605, snapshot.data() + 0xC1A605 - code->VirtualAddress, sizeof(unlockedStub)));
+                    }
+                    testProgressionUnlocked = true;
+                    *infoSlot = savedInfo; *playerSlot = previousPlayers; *managerSlot = previousManager;
+                    for (auto rva : {0xC1D206u, 0xAE8070u, 0xB70890u, 0xB70830u, 0xC54D70u, 0xC5C3F0u, 0xC19E10u})
+                        CHECK(replaceCode(base + rva, snapshot.data() + rva - code->VirtualAddress, sizeof(jumpStub)));
+                    CHECK(replaceCode(base + 0xAFE4B0, snapshot.data() + 0xAFE4B0 - code->VirtualAddress, sizeof(getString)));
+                    CHECK(replaceCode(base + 0x278980, snapshot.data() + 0x278980 - code->VirtualAddress, sizeof(skipNotification)));
+                    crabe::di1::removeCharacterFreedom();
+                    CHECK(!std::memcmp(bytes, snapshot.data(), snapshot.size()));
+                }
+                // Changed progression code must refuse the extended policy.
+                const unsigned char alteredCheck = 0x90;
+                CHECK(replaceCode(base + 0xC1E303, &alteredCheck, 1));
+                CHECK(!crabe::di1::installCharacterFreedom(image, options));
+                CHECK(!crabe::di1::characterFreedomActive());
+                CHECK(replaceCode(base + 0xC1E303, snapshot.data() + 0xC1E303 - code->VirtualAddress, 1));
+                CHECK(!std::memcmp(bytes, snapshot.data(), snapshot.size()));
+                options.toolsInAnyPlayset = false;
                 // Another hook occupying the late world filter must roll back the
                 // already installed menu hook/admission edits without removing it.
                 void* occupiedWorldTrampoline{};

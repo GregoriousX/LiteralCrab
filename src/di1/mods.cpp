@@ -6,6 +6,7 @@
 #include "di1/asset_loader.hpp"
 #include "di1/audio_banks.hpp"
 #include "di1/character_freedom.hpp"
+#include "di1/character_freedom_policy.hpp"
 #include "di1/character_targets.hpp"
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
@@ -13,6 +14,7 @@
 #include "minhook/MinHook.h"
 #include "mods/file_redirect.hpp"
 #include "mods/lua_mods.hpp"
+#include <algorithm>
 #include <cwchar>
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +26,141 @@
 
 namespace crabe::di1 {
 namespace {
+    using DictionaryText = const char*(__thiscall*)(void*, const char*, unsigned, unsigned);
+    DictionaryText originalDictionaryText{};
+    const char* __fastcall scareDictionaryText(void* self, void*, const char* key, unsigned first, unsigned second) {
+        return originalDictionaryText(self, scareToolLabelKey(key), first, second);
+    }
+    bool installScareLabel(HMODULE host) {
+        if (originalDictionaryText) return true;
+        const auto base = reinterpret_cast<std::uintptr_t>(host);
+        constexpr std::uint32_t rva = 0x27F4B0;
+        if (!codeMatches(base + rva, "81 EC 08 08 00 00 53 8B D9 8B 0D") ||
+            !callsTo(base, 0x74E00C, rva) || !callsTo(base, 0x74E1CD, rva) ||
+            !codeMatches(base + 0x27F67F, "C2 0C 00")) return false;
+        void* trampoline{};
+        auto* target = reinterpret_cast<void*>(base + rva);
+        if (MH_CreateHook(target, reinterpret_cast<void*>(&scareDictionaryText), &trampoline) != MH_OK) return false;
+        originalDictionaryText = reinterpret_cast<DictionaryText>(trampoline);
+        if (MH_EnableHook(target) == MH_OK) return true;
+        MH_RemoveHook(target);
+        originalDictionaryText = nullptr;
+        return false;
+    }
+    using ScareMessage = bool(__thiscall*)(void*, const char*, void*, std::uint32_t, std::uint32_t);
+    using ScareActor = void*(__cdecl*)(std::uint32_t);
+    using ScareComponent = void*(__thiscall*)(void*, const char*);
+    using ScareToolName = const char*(__thiscall*)(void*, const char*);
+    using ScareMotion = bool(__thiscall*)(void*, const char*, int, unsigned, unsigned, unsigned);
+    using ScareMotionEnded = bool(__thiscall*)(void*, unsigned);
+    using ScareMotionStop = void(__thiscall*)(void*, const char*, int, unsigned);
+    ScareMessage originalScareMessage{};
+    ScareActor scareActor{};
+    ScareComponent scareComponent{};
+    ScareToolName scareToolName{};
+    ScareMotion scareMotion{};
+    ScareMotionEnded scareMotionEnded{};
+    ScareMotionStop scareMotionStop{};
+    const volatile std::uint32_t* scareGameTime{};
+    std::uint32_t scarePoseActors[4]{}, scarePoseTime = ~0u;
+    DWORD scarePoseThread{};
+    thread_local bool scarePoseBusy{};
+    unsigned scarePoseEvents{};
+    void finishScarePoses() noexcept {
+        // Only the script/game thread that started the gesture may touch actor
+        // animation. Handles are resolved afresh; never retain actor pointers.
+        if (!scarePoseThread || GetCurrentThreadId() != scarePoseThread) return;
+        __try {
+            const auto now = *scareGameTime;
+            if (now == scarePoseTime) return;
+            scarePoseTime = now;
+            for (auto& handle : scarePoseActors) {
+                if (!handle) continue;
+                void* actor = scareActor(handle);
+                if (!actor) { handle = 0; continue; }
+                void* tools = scareComponent(actor, "ToolSetManager");
+                const char* equipped = tools ? scareToolName(tools, "Items") : nullptr;
+                const bool selected = equipped && std::string_view(equipped) == "ITEM_LITERALCRAB_MEGAPHONE";
+                if (!selected || scareMotionEnded(actor, 14)) {
+                    // The named stop cannot interrupt a different motion that
+                    // another interaction has placed on this channel.
+                    scareMotionStop(actor, "LCRM_MEGAPHONE_SCARE", 3, 14);
+                    handle = 0;
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            for (auto& handle : scarePoseActors) handle = 0;
+        }
+    }
+    void playScarePose(const char* message, std::uint32_t sender, std::uint32_t receiver) noexcept {
+        // The private tool message is separate from the accepted ScareAttack
+        // gameplay notification. Ordinary weapons and native scares never enter.
+        if (!message || std::string_view(message) != "LCRPose" || !sender || !receiver || sender == receiver) return;
+        __try {
+            void* actor = scareActor(receiver);
+            if (!actor || !scareActor(sender)) return;
+            void* tools = scareComponent(actor, "ToolSetManager");
+            const char* equipped = tools ? scareToolName(tools, "Items") : nullptr;
+            if (!scareToolPoseMessage(message, sender, receiver, equipped)) return;
+            const auto thread = GetCurrentThreadId();
+            if (scarePoseThread && scarePoseThread != thread) return;
+            std::uint32_t* slot{};
+            for (auto& handle : scarePoseActors) if (handle == receiver) { slot = &handle; break; }
+            if (!slot) for (auto& handle : scarePoseActors) if (!handle) { slot = &handle; break; }
+            if (!slot) return;
+            // A private alias on the original Misc_OverRide channel. Mode 0
+            // starts once at frame zero; native channel completion owns cleanup.
+            const bool played = scareMotion(actor, "LCRM_MEGAPHONE_SCARE", 0, 0, 3, 14);
+            if (played) { scarePoseThread = thread; *slot = receiver; }
+            if (scarePoseEvents++ < 32) log("Gameplay: MU megaphone scare pose actor=%08X started=%d.", receiver, played);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (scarePoseEvents++ < 32) log("Gameplay: MU megaphone scare pose unavailable.");
+        }
+    }
+    bool __fastcall scarePoseMessage(void* self, void*, const char* message, void* data,
+        std::uint32_t sender, std::uint32_t receiver) {
+        const bool result = originalScareMessage(self, message, data, sender, receiver);
+        if (!scarePoseBusy) {
+            scarePoseBusy = true;
+            finishScarePoses();
+            playScarePose(message, sender, receiver);
+            scarePoseBusy = false;
+        }
+        return result;
+    }
+    bool installScarePose(HMODULE host) {
+        if (originalScareMessage) return true;
+        const auto base = reinterpret_cast<std::uintptr_t>(host);
+        if (!codeMatches(base + 0x278A90, "56 8B F1 8B 06 8B 50 0C 6A 00 FF D2") ||
+            !callsTo(base, 0x27A33D, 0x278A90) ||
+            !codeMatches(base + 0x326030, "83 EC 08 8B 44 24 0C 8D 0C 24") ||
+            !codeMatches(base + 0x31F6B0, "8B 89 F0 00 00 00 85 C9") ||
+            !codeMatches(base + 0xC1A1C0, "53 55 56 57 8B F9 33 ED 8D B7 EC 02 00 00") ||
+            !codeMatches(base + 0x31F140, "51 0F B7 05") ||
+            !callsTo(base, 0x31F14D, 0x283E50) || !callsTo(base, 0x31F17C, 0xD6EC00) ||
+            !callsTo(base, 0x2CC04B, 0xD6EC00) || !codeMatches(base + 0x31F182, "C2 14 00") ||
+            !codeMatches(base + 0x31F190, "51 0F B7 05") || !callsTo(base, 0x31F1C2, 0xD6D880) ||
+            !codeMatches(base + 0x31F1C8, "C2 0C 00") ||
+            !codeMatches(base + 0x31F1D0, "51 0F B7 05") || !callsTo(base, 0x2C6746, 0x31F1D0) ||
+            !callsTo(base, 0x31F1F8, 0xD6D8B0) || !codeMatches(base + 0x31F1FE, "C2 04 00") ||
+            !codeMatches(base + 0x338319, "03 05") ||
+            *reinterpret_cast<const std::uintptr_t*>(base + 0x33831B) != base + 0x127DF98) return false;
+        scareActor = reinterpret_cast<ScareActor>(base + 0x326030);
+        scareComponent = reinterpret_cast<ScareComponent>(base + 0x31F6B0);
+        scareToolName = reinterpret_cast<ScareToolName>(base + 0xC1A1C0);
+        scareMotion = reinterpret_cast<ScareMotion>(base + 0x31F140);
+        scareMotionStop = reinterpret_cast<ScareMotionStop>(base + 0x31F190);
+        scareMotionEnded = reinterpret_cast<ScareMotionEnded>(base + 0x31F1D0);
+        scareGameTime = reinterpret_cast<const volatile std::uint32_t*>(base + 0x127DF98);
+        void* trampoline{};
+        auto* target = reinterpret_cast<void*>(base + 0x278A90);
+        if (MH_CreateHook(target, reinterpret_cast<void*>(&scarePoseMessage), &trampoline) != MH_OK) return false;
+        originalScareMessage = reinterpret_cast<ScareMessage>(trampoline);
+        if (MH_EnableHook(target) == MH_OK) return true;
+        MH_RemoveHook(target);
+        originalScareMessage = nullptr;
+        return false;
+    }
     struct Function {
         std::uint32_t rva;
         const char* prologue;
@@ -164,12 +301,38 @@ bool installMods(HMODULE host) {
         const auto modsRoot = std::wstring(pluginDirectory()) + L"mods";
         auto index = mods::Index::load(modsRoot, messages);
         // Assets do not depend on the Lua profile: they only redirect files the game opens.
-        installAssets(host, modsRoot, index.mods, messages);
+        auto assetMods = index.mods;
+        // This optional companion adds a new native tool-table row. Never expose
+        // its assets without the character-freedom actor/dependency patches.
+        std::erase_if(assetMods, [](const mods::Mod& mod) {
+            return mod.folder == "literalcrab_mu_scare" && !characterFreedomActive();
+        });
+        const bool scareTool = std::any_of(assetMods.begin(), assetMods.end(), [](const mods::Mod& mod) {
+            return mod.folder == "literalcrab_mu_scare";
+        });
+        installAssets(host, modsRoot, assetMods, messages);
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
         if (characterFreedomActive()) {
+            if (scareTool) {
+                log("Gameplay: MU megaphone native localized Mike skill label=%d.", installScareLabel(host));
+                log("Gameplay: MU megaphone isolated scare motion hook=%d.", installScarePose(host));
+                index.addBuiltinPatch({"common_actors.lua", "cars_actors.lua", "incredibles_actors.lua", "monstersu_actors.lua",
+                    "pirates_actors.lua", "loneranger_actors.lua", "toystoryinspace_actors.lua", "rumpusroom_actors.lua",
+                    "contains:ActorList"}, "mu_scare_actor", std::string(characterScareActorPatch), "{}");
+                index.addBuiltinPatch({"coredatamap.lua", "carsdatamap.lua", "incrediblesdatamap.lua", "monstersudatamap.lua",
+                    "piratesdatamap.lua", "lonerangerdatamap.lua", "toystoryinspacedatamap.lua", "rumpusroomdatamap.lua",
+                    "contains:tool_megaphone", "contains:Tool_Megaphone"},
+                    "mu_scare_dependencies", std::string(characterScareDependenciesPatch), "{}");
+                index.addBuiltinPatch({"presentation/toolselect.lua"}, "mu_scare_icon", std::string(characterScareIconPatch), "{}");
+                index.addBuiltinPatch({"weapons.lua", "var/weapons/weapons.lua", "contains:name='SullyComboX'"},
+                    "mu_scare_weapon", std::string(characterScareWeaponPatch), "{}");
+                log("Gameplay: experimental MU megaphone companion enabled; gameplay validation pending.");
+            }
             index.addBuiltinPatch({"bitmasks.lua", "contains:PC_RespawnDeath"}, "character_reset_filter",
                 std::string(characterResetFilterPatch), "{}");
+            index.addBuiltinPatch({"bitmasks.lua", "contains:AV_AvatarPirates"}, "character_progression_filters",
+                std::string(characterTriggerFiltersPatch), "{}");
             index.addBuiltinPatch({"zonelist.lua", "contains:PlayableAvatars"}, "character_playsets", std::string(characterPlaysetsPatch), "{}");
             index.addBuiltinPatch({"contains:ActorList"}, "character_actor_registry", std::string(characterToyboxActorsPatch), "{}");
             for (const auto [file, marker, home] : {

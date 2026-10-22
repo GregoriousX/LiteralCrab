@@ -27,8 +27,8 @@ for _, name in ipairs({"masks", "filters", "metafilters"}) do
         if key == "AV_AvatarBiped" then biped = row end
     end
 end
--- Only the known reset filter changes. Other Pirates avatar filters also gate
--- missions, shops and NPC interactions and must keep their authored membership.
+-- This reset patch retains NPC membership. A separate progression patch widens
+-- the six biped avatar groups after validating their original definitions.
 local original = "AV_AvatarPirates|MG_Gibbs|MG_Pintel|MG_Ragetti|MG_TDalma|PC_PirateAny|Blockhead_PIR"
 if not target or target.UID ~= 3736 or target.desc ~= original or
     not biped or biped.UID ~= 144 then return end
@@ -60,6 +60,80 @@ if #additions == 0 then return end
 table.sort(additions)
 target.desc = original .. "|" .. table.concat(additions, "|")
 log("APPLIED: Pirates reset filter includes visiting biped figures; original NPC membership retained")
+)lua";
+inline constexpr std::string_view characterTriggerFiltersPatch = R"lua(
+local _, options, log = ...
+if type(Data) ~= "table" or Data.Package ~= "Core" or type(Data.Sets) ~= "table" then return end
+local actors
+for _, set in ipairs(Data.Sets) do
+    if type(set) == "table" and set.set == "ActorType" then
+        if actors then return end
+        actors = set
+    end
+end
+if not actors then return end
+local definitions, terminal = {}, {}
+for _, kind in ipairs({"masks", "filters", "metafilters"}) do
+    if type(actors[kind]) ~= "table" then return end
+    for _, row in ipairs(actors[kind]) do
+        if type(row) ~= "table" then return end
+        local key = kind == "masks" and row.mask or row.filter
+        if type(key) ~= "string" or definitions[key] then return end
+        definitions[key], terminal[key] = row, kind == "masks"
+    end
+end
+-- Vehicle/intro/friend filters describe roles, not biped playset membership.
+-- Add flat leaves, never cyclic references between the widened avatar groups.
+local targets = {
+    {"AV_AvatarIncredibles", 64, "AV_Dash|AV_ElastiGirl|AV_Frozone|AV_MrIncredible|AV_Syndrome|AV_Violet"},
+    {"AV_AvatarLoneRanger", 146, "AV_LoneRanger|AV_Tonto"},
+    {"AV_AvatarMonsters", 192, "AV_Mike|AV_Randall|AV_Sully"},
+    {"AV_AvatarPirates", 215, "AV_Barbossa|AV_DavyJones|AV_JackSparrow"},
+    {"AV_AvatarToyBox", 2935, "AV_Anna|AV_Elsa|AV_JackSkellington|AV_MickeyMouse|AV_Perry|AV_Phineas|AV_Ralph|AV_Rapunzel|AV_Vanellope"},
+    {"AV_AvatarToyStory", 263, "AV_Blockhead|AV_Buzz|AV_Jessie|AV_Woody|AV_Zurg"},
+}
+local biped, cars = definitions.AV_AvatarBiped, definitions.AV_AvatarCars
+if not biped or biped.UID ~= 144 or not cars or cars.UID ~= 255 then return end
+local function expand(key, result, visiting, depth)
+    local row = definitions[key]
+    if not row or visiting[key] or depth > 32 then return false end
+    if terminal[key] then result[key] = true; return true end
+    if type(row.desc) ~= "string" or row.desc == "" or string.find(row.desc, "[^%w_|]") or
+        string.sub(row.desc, 1, 1) == "|" or string.sub(row.desc, -1) == "|" or
+        string.find(row.desc, "||", 1, true) then return false end
+    visiting[key] = true
+    for child in string.gmatch(row.desc, "[^|]+") do
+        if not expand(child, result, visiting, depth + 1) then return false end
+    end
+    visiting[key] = nil
+    return true
+end
+local visitors, vehicles = {}, {}
+if not expand("AV_AvatarBiped", visitors, {}, 0) or
+    not expand("AV_AvatarCars", vehicles, {}, 0) then return end
+local excluded = {AV_Proxy=true, AV_Blockhead=true, AV_Spark=true, AV_Sparkman=true, AV_Frozone=true}
+for key in pairs(visitors) do
+    if vehicles[key] then return end
+    if excluded[key] then visitors[key] = nil end
+end
+local changes = {}
+for _, spec in ipairs(targets) do
+    local row = definitions[spec[1]]
+    if not row or row.UID ~= spec[2] then return end
+    local original, additions = {}, {}
+    for key in string.gmatch(spec[3], "[^|]+") do
+        if not terminal[key] then return end
+        original[key] = true
+    end
+    for key in pairs(visitors) do if not original[key] then additions[#additions + 1] = key end end
+    table.sort(additions)
+    local wanted = spec[3] .. (#additions > 0 and "|" .. table.concat(additions, "|") or "")
+    -- Validate every target before mutation. Accept our exact output on reload.
+    if row.desc ~= spec[3] and row.desc ~= wanted then return end
+    if row.desc ~= wanted then changes[#changes + 1] = {row, wanted} end
+end
+for _, change in ipairs(changes) do change[1].desc = change[2] end
+if #changes > 0 then log("APPLIED: six avatar progression filters accept visiting biped figures; Cars/mount/vehicle filters retained") end
 )lua";
 inline constexpr std::string_view characterTargetsPatch = R"lua(
 local _, options, log = ...
@@ -379,4 +453,88 @@ if type(toybox) == "table" and type(toybox.PlayableAvatars) == "string" then
 end
 log("APPLIED: " .. changed .. " play sets keep native membership and enable tool/motion FX")
 )lua";
+
+// The companion supplies the appended binary tool row and private tool actor;
+// the hidden native megaphone ability and ordinary combat stay unchanged.
+inline constexpr std::string_view characterScareActorPatch = R"lua(
+local _, options, log = ...
+if type(Data) ~= "table" or Data.Type ~= "ActorList" or type(Data.Records) ~= "table" then return end
+local source
+for _, row in pairs(Data.Records) do
+    if type(row) == "table" then
+        if row.Name == "tool_literalcrabmegaphone" then return end
+        if row.Name == "tool_megaphone" and row.Parms == "DNAFile=characters/Megaphone.dnax;" and
+            row.Type == "Other" and row.SubType == "ItemsAndProps" then source = row end
+    end
+end
+if not source then return end
+Data.Records[#Data.Records + 1] = {Name="tool_literalcrabmegaphone", Type=source.Type,
+    SubType=source.SubType, Parms="DNAFile=characters/LiteralCrab_Megaphone.dnax;"}
+log("APPLIED: separate experimental megaphone actor registered")
+)lua";
+inline constexpr std::string_view characterScareDependenciesPatch = R"lua(
+local _, options, log = ...
+if type(DataMap) ~= "table" or type(DataMap.Actor) ~= "table" or
+    type(DataMap.Actor.tool_megaphone) ~= "table" then return end
+local key = "tool_literalcrabmegaphone"
+if DataMap.Actor[key] ~= nil then return end
+local original = DataMap.Actor.tool_blaster
+if type(original) ~= "table" or type(original.Files) ~= "table" then return end
+local files = {}
+for _, file in ipairs(original.Files) do
+    if type(file) ~= "string" then return end
+    local lower = string.lower(file)
+    if lower == "dna|characters/blaster.dnax" then
+        file = "DNA|characters/LiteralCrab_Megaphone.dnax"
+    elseif lower == "entity|characters/avatar_tools/blaster" then
+        file = "Entity|characters/Avatar_Tools/MU_Megaphone"
+    elseif lower == "script|characters/blaster.sx" then
+        file = "Script|characters/LiteralCrab_Megaphone.sx"
+    end
+    files[#files + 1] = file
+end
+-- The tool script requests Mike's original scare audio and green
+-- choreography. A visitor's own character does not preload those resources.
+files[#files + 1] = "Audio|MU_Mike.fev"
+files[#files + 1] = "Cho|choreographies/mu_scare_green/mu_scare_green"
+DataMap.Actor[key] = {Files=files}
+local common = type(DataMap.Playset) == "table" and DataMap.Playset._loadforallplaysets_
+if type(common) == "table" then
+    if type(common.Includes) ~= "table" then common.Includes = {} end
+    local include = key .. "|Actor"
+    for _, old in ipairs(common.Includes) do if old == include then return end end
+    common.Includes[#common.Includes + 1] = include
+end
+log("APPLIED: experimental megaphone dependencies available")
+)lua";
+// A distinct weapon name prevents the tool cleanup from removing a native
+// Mike/Sulley combo weapon already present in the avatar's inventory.
+inline constexpr std::string_view characterScareWeaponPatch = R"lua(
+local _, options, log = ...
+if type(weapon) ~= "table" then return end
+local source
+for _, row in ipairs(weapon) do
+    if type(row) == "table" then
+        if row.name == "LCRMUScare" then return end
+        if row.name == "SullyComboX" and row.class == "gun" and
+            row.typeCC == "sulx" and row.projectile == "SullyComboX" then source = row end
+    end
+end
+if not source then return end
+local added = {}
+for key, value in pairs(source) do added[key] = value end
+added.name = "LCRMUScare"
+weapon[#weapon + 1] = added
+log("APPLIED: isolated avatar-owned MU scare weapon; original combo weapons preserved")
+)lua";
+inline constexpr std::string_view characterScareIconPatch = R"lua(
+local _, options, log = ...
+if type(ToolSelect) ~= "table" or type(ToolSelect.GetIconPath) ~= "function" then return end
+local original = ToolSelect.GetIconPath
+function ToolSelect:GetIconPath(name)
+    if name == "ITEM_LITERALCRAB_MEGAPHONE" then return original(self, "ITEM_MIKE") end
+    return original(self, name)
+end
+)lua";
+
 }

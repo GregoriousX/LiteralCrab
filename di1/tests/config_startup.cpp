@@ -89,6 +89,7 @@ int wmain(int argc, wchar_t** argv) {
     fs::remove_all(root, cleanupError);
     CHECK(!cleanupError);
     const Config defaults;
+    CHECK(!defaults.toolsInAnyPlayset);
     CHECK(!defaults.exceptionDiagnostics && !defaults.crashReports && !defaults.traceAudioBanks);
 
     load(root / L"missing", nullptr);
@@ -100,6 +101,7 @@ int wmain(int argc, wchar_t** argv) {
     const std::string oldIni = "[Gameplay]\nCharactersInAnyPlayset=1\n[Mods]\nEnabled=1\n";
     load(root / L"legacy", &oldIni);
     CHECK(config().charactersInAnyPlayset && config().mods);
+    CHECK(!config().toolsInAnyPlayset);
     disabled(root / L"legacy");
     reset();
 
@@ -109,9 +111,22 @@ int wmain(int argc, wchar_t** argv) {
         CHECK(!shipped.empty());
         load(root / L"shipped", &shipped);
         CHECK(config().testExperienceMultiplier == 1 && config().toyBoxLimitScale == 1);
+        CHECK(!config().toolsInAnyPlayset);
         disabled(root / L"shipped");
         reset();
     }
+
+    for (const bool characters : {false, true}) for (const bool tools : {false, true}) {
+        const std::string ini = "[Gameplay]\nCharactersInAnyPlayset=" + std::to_string(characters) +
+            "\nToolsInAnyPlayset=" + std::to_string(tools) + "\n[Mods]\nEnabled=1\n";
+        load(root / (L"tools-" + std::to_wstring(characters) + L"-" + std::to_wstring(tools)), &ini);
+        CHECK(config().charactersInAnyPlayset == characters);
+        CHECK(config().toolsInAnyPlayset == (characters && tools));
+        reset();
+    }
+    load(root / L"legacy-after-tools", &oldIni);
+    CHECK(!config().toolsInAnyPlayset);
+    reset();
 
     const std::string exceptions = "[Diagnostics]\nExceptionLog=1\n";
     load(root / L"exceptions", &exceptions);

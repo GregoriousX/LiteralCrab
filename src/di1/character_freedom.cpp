@@ -47,6 +47,7 @@ namespace {
     using ZoneBool = bool(__thiscall*)(void*, const char*, int, void*, bool);
     ZoneBool zoneBool{};
     bool trace{};
+    bool sharedToolsAcrossPlaysets{};
     unsigned experienceMultiplier = 1;
     volatile LONG variantEvents{}, experienceEvents{};
     constexpr std::uint32_t awardExperienceRva = 0x759D60;
@@ -105,6 +106,13 @@ namespace {
     bool toolUnlockedInstalled{}, projectileTraceInstalled{};
     using ToolRefresh = void(__thiscall*)(void*, bool);
     ToolRefresh refreshTool{};
+    ToolRefresh originalRefreshTool{};
+    constexpr std::uint32_t refreshToolRva = 0xC1E280;
+    bool refreshToolInstalled{};
+    constexpr std::uint32_t nextToolRva = 0xC19FD0;
+    using NextTool = int(__thiscall*)(void*, const char*, int, void**);
+    NextTool originalNextTool{};
+    bool nextToolInstalled{};
     thread_local bool refreshingToolAvailability{};
     volatile LONG toolUnlockedEvents{}, toolCommandEvents{}, toolScriptEvents{}, projectileEvents{};
     constexpr std::uint32_t emitterLookupRva = 0x2D8AC0;
@@ -126,6 +134,7 @@ namespace {
     void traceToolState(void* tools, const char* stage, const char* requested = nullptr) noexcept;
     std::uint32_t componentActor(void* component) noexcept;
     bool playerInPlayset(std::uint32_t actor) noexcept;
+    bool pirateStoryFlintlock(const unsigned char* entry) noexcept;
     template<std::size_t N> void copyTraceString(char (&out)[N], const char* value) noexcept;
     bool __fastcall traceToolAsset(void* self, void*, const char* name, std::uint32_t type) {
         const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
@@ -153,6 +162,9 @@ namespace {
         return entry && !*reinterpret_cast<const void* const*>(entry + 0x20) &&
             *reinterpret_cast<const unsigned*>(entry + 0x5C) == 0;
     }
+    bool crossPlaysetTool(const unsigned char* entry) noexcept {
+        return entry && (sharedToolsAcrossPlaysets || personalTool(entry));
+    }
     void* zoneBlockedTool(void* tools, const char* name) noexcept {
         if (!tools || !name) return nullptr;
         __try {
@@ -162,7 +174,7 @@ namespace {
             if (!entries || count > 512) return nullptr;
             for (unsigned i = 0; i < count; ++i) {
                 auto* entry = static_cast<unsigned char*>(entries[i]);
-                if (!entry || !personalTool(entry) || (entry[0x78] & 5) ||
+                if ((!crossPlaysetTool(entry) && !pirateStoryFlintlock(entry)) || (entry[0x78] & 5) ||
                     !*reinterpret_cast<const void* const*>(entry + 0x24) ||
                     *reinterpret_cast<const int*>(entry + 0x70) != 0) continue;
                 const auto* toolName = *reinterpret_cast<const char* const*>(entry + 0x14);
@@ -188,8 +200,8 @@ namespace {
             if (void* entry = zoneBlockedTool(self, name)) {
                 // Initial inventory construction can precede player registration.
                 // Re-run the engine's GetTool(false) checks after that registration;
-                // its unlock/upgrade checks still decide whether the personal tool
-                // is usable. Shared Toy Box/shop tools retain native world filters.
+                // its unlock/upgrade checks still decide whether the tool is
+                // usable. Shared gear is included only by ToolsInAnyPlayset.
                 refreshingToolAvailability = true;
                 refreshTool(entry, false);
                 refreshingToolAvailability = false;
@@ -206,6 +218,47 @@ namespace {
             traceToolState(self, "auto-equip", copy);
         }
         return result;
+    }
+    int __fastcall enumeratePlayerTools(void* self, void*, const char* group, int start, void** selected) {
+        // The frontend lists packs/tools via GetNextTool, not IsToolUnlocked.
+        // Initial GetTool calls can precede player registration and cache a
+        // failed world check. Re-evaluate those entries once at list start;
+        // let the native enumerator retain UI/group/suppression filtering.
+        if (active && start == 0 && group && selected &&
+            !refreshingToolAvailability && refreshTool && playerInPlayset(componentActor(self))) {
+            __try {
+                auto* memory = static_cast<unsigned char*>(self);
+                const auto count = *reinterpret_cast<const unsigned*>(memory + 0x2C0);
+                auto* const* entries = *reinterpret_cast<void* const* const*>(memory + 0x2BC);
+                if (entries && count <= 512 && memory[0x38C]) {
+                    refreshingToolAvailability = true;
+                    __try {
+                        for (unsigned i = 0; i < count; ++i) {
+                            auto* entry = static_cast<unsigned char*>(entries[i]);
+                            // Include unresolved override rows: their final name
+                            // and zone list may not exist yet. Never force awards.
+                            if (entry && !(entry[0x78] & 5) &&
+                                (sharedToolsAcrossPlaysets || pirateStoryFlintlock(entry))) refreshTool(entry, false);
+                        }
+                    } __finally { refreshingToolAvailability = false; }
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        return originalNextTool(self, group, start, selected);
+    }
+    void __fastcall refreshStoryTool(void* self, void*, bool forced) {
+        originalRefreshTool(self, forced);
+        auto* entry = static_cast<unsigned char*>(self);
+        // Pirates' three native figures have an innate flintlock (no upgrade).
+        // Match that story equipment for registered visitors ONLY in Pirates.
+        // Keep the real upgrade pointer and all award/suppression bits intact;
+        // outside this world the normal UP_FlintLock requirement remains native.
+        if (!active || forced || !pirateStoryFlintlock(entry)) return;
+        auto** prerequisite = reinterpret_cast<const char**>(entry + 0x20);
+        const auto saved = *prerequisite;
+        *prerequisite = nullptr;
+        __try { originalRefreshTool(self, false); }
+        __finally { *prerequisite = saved; }
     }
     void* __cdecl traceProjectileCreate(std::uint32_t requestedActor, ProjectileVector position, std::uint32_t kind, void* owner) {
         const bool report = InterlockedIncrement(&projectileEvents) <= 128;
@@ -253,6 +306,21 @@ namespace {
             return player >= 0 && player < 4 && currentWorldIsPlayset();
         } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
+    bool pirateStoryFlintlock(const unsigned char* entry) noexcept {
+        if (!entry || !zoneManager || !zoneString) return false;
+        __try {
+            if ((entry[0x78] & 5) || *reinterpret_cast<const unsigned*>(entry + 0x30) != ~0u ||
+                *reinterpret_cast<const unsigned*>(entry + 0x5C) != 1) return false;
+            const auto name = *reinterpret_cast<const char* const*>(entry + 0x14);
+            const auto upgrade = *reinterpret_cast<const char* const*>(entry + 0x20);
+            if (!name || std::strcmp(name, "ITEM_FLINTLOCK") || !upgrade || std::strcmp(upgrade, "UP_FlintLock")) return false;
+            auto* tools = *reinterpret_cast<void* const*>(entry);
+            if (!tools || !playerInPlayset(componentActor(tools)) || !*zoneManager) return false;
+            const auto zone = *reinterpret_cast<const int*>(static_cast<const unsigned char*>(*zoneManager) + 0x154);
+            const auto world = zoneString(*zoneManager, "PlaysetProperties", zone, nullptr, nullptr);
+            return world && !_stricmp(world, "Pirates");
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
     bool canSelectPlayerTools(void* state, std::uint32_t actor) noexcept {
         if (!playerInPlayset(actor) || !originalControlGet) return false;
         __try {
@@ -279,12 +347,19 @@ namespace {
         return allow ? false : result;
     }
     int __fastcall allowToolWorld(void* self, void*, const void* zones) {
+        const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
         const int result = originalToolWorld(self, zones);
         if (result || !active || !zones) return result;
         std::uint32_t actor{};
         __try {
             const auto* memory = static_cast<const unsigned char*>(self);
-            if (!personalTool(memory) || (memory[0x78] & 5) != 4) return result;
+            if (!crossPlaysetTool(memory)) return result;
+            // GetTool has two zone calls. The earlier call resolves an unlocked
+            // override row before availability is cached. Its prerequisite check
+            // is verified below; requiring the later cache bit here would discard
+            // foreign tool rows before their name/upgrade fields were resolved.
+            const bool resolvingRow = sharedToolsAcrossPlaysets && caller == installedBase + 0xC1E316;
+            if (resolvingRow ? (memory[0x78] & 1) != 0 : (memory[0x78] & 5) != 4) return result;
             auto* tools = *static_cast<void**>(self);
             // The native caller checks upgrade/unlock state before this zone filter.
             // Do not change the cached native result, award bits, rules or suppression.
@@ -293,7 +368,7 @@ namespace {
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         if (!playerInPlayset(actor)) return result;
         if (trace && InterlockedIncrement(&toolFreedomEvents) <= 64)
-            log("Character freedom: personal player tool allowed across playset zone filter actor=%08X", actor);
+            log("Character freedom: player tool allowed across playset zone filter actor=%08X shared=%d", actor, sharedToolsAcrossPlaysets);
         return 1;
     }
     mods::LuaApi lua{};
@@ -327,6 +402,9 @@ namespace {
 
     void __fastcall chooseAvatarVariant(void* self, void*, const char** avatar) {
         // Called during creation/recreation, including a return from a vehicle; no frame work.
+        char input[128]{};
+        const bool report = trace && InterlockedIncrement(&variantEvents) <= 64;
+        if (report && avatar && *avatar) strncpy_s(input, *avatar, _TRUNCATE);
         bool visitor = false;
         const char* current = nullptr;
         int zone = -1;
@@ -336,15 +414,20 @@ namespace {
             current = zoneString(*zoneManager, "PlaysetProperties", zone, nullptr, nullptr);
             if (current) {
                 AcquireSRWLockShared(&ownershipLock);
-                try { visitor = ownership.foreign(*avatar, current); }
+                try {
+                    if (const auto* baseActor = ownership.visitorBaseActor(*avatar, current)) {
+                        *avatar = baseActor;
+                        visitor = true;
+                    } else if (!CharacterPlaysets::playsetVariant(*avatar)) {
+                        visitor = ownership.foreign(*avatar, current);
+                    }
+                }
                 catch (...) { visitor = false; }
                 ReleaseSRWLockShared(&ownershipLock);
             }
         }
-        char input[128]{};
-        const bool report = trace && InterlockedIncrement(&variantEvents) <= 64;
-        if (report && avatar && *avatar) strncpy_s(input, *avatar, _TRUNCATE);
-        // Leaving the engine string intact selects the already registered Toy Box actor.
+        // Visitors use an existing base creation key even if the caller already
+        // supplied _PS. Native/home/unknown variants retain the original selector.
         if (!visitor) originalVariant(self, avatar);
         if (report) {
             const bool haveWorld = zoneBool && zoneManager && *zoneManager;
@@ -668,6 +751,14 @@ namespace {
     }
 
     bool installToolFreedom(std::uintptr_t base) {
+        if (!codeMatches(base + nextToolRva, "8B 44 24 0C 56 8B 74 24 0C 57 8B F9 C7 00 00 00 00 00") ||
+            !callsTo(base, 0x74A4F3, nextToolRva) || !callsTo(base, 0x74A6D4, nextToolRva) ||
+            !callsTo(base, 0xC1A027, 0xC19E20) || !callsTo(base, 0xC1A032, 0xC19D70)) return false;
+        if (!callsTo(base, 0xC1E2E9, 0xC54D70) || !callsTo(base, 0xC1E2FE, 0xC5C3F0) ||
+             !codeMatches(base + 0xC1E303, "84 C0 0F 84 3F 01 00 00") ||
+             !callsTo(base, 0xC1E311, toolWorldRva) ||
+             !callsTo(base, 0xC1E491, 0xC54D70) || !callsTo(base, 0xC1E4A2, 0xC5C3F0) ||
+             !codeMatches(base + 0xC1E4B3, "84 5E 78 0F 84 4E 01 00 00")) return false;
         if (!codeMatches(base + controlSetRva, "53 56 57 8B 7C 24 10 8B 07 8B F1 8B 4E 20 50 E8") ||
             !callsTo(base, 0xB3000F, 0x17D10) || !codeMatches(base + 0xB3007F, "C2 08 00") ||
             !codeMatches(base + controlGetRva, "56 57 8B 7C 24 0C 8B 07 8B F1 8B 4E 20 50 E8") ||
@@ -727,7 +818,20 @@ namespace {
         originalEmitterLookup = reinterpret_cast<EmitterLookup>(trampoline);
         emitterInstalled = MH_EnableHook(target) == MH_OK;
         if (!emitterInstalled) MH_RemoveHook(target);
-        return emitterInstalled;
+        if (!emitterInstalled) return false;
+        {
+            target = reinterpret_cast<void*>(base + refreshToolRva);
+            if (MH_CreateHook(target, reinterpret_cast<void*>(&refreshStoryTool), &trampoline) != MH_OK) return false;
+            originalRefreshTool = reinterpret_cast<ToolRefresh>(trampoline);
+            refreshToolInstalled = MH_EnableHook(target) == MH_OK;
+            if (!refreshToolInstalled) { MH_RemoveHook(target); return false; }
+            target = reinterpret_cast<void*>(base + nextToolRva);
+            if (MH_CreateHook(target, reinterpret_cast<void*>(&enumeratePlayerTools), &trampoline) != MH_OK) return false;
+            originalNextTool = reinterpret_cast<NextTool>(trampoline);
+            nextToolInstalled = MH_EnableHook(target) == MH_OK;
+            if (!nextToolInstalled) { MH_RemoveHook(target); return false; }
+        }
+        return true;
     }
 
     struct Edit {
@@ -865,6 +969,7 @@ bool installCharacterFreedom(HMODULE host, const Config& options) {
     log("Gameplay: characters allowed in every play set (%u native checks relaxed).", count);
     active = true;
     trace = options.traceCharacterFreedom;
+    sharedToolsAcrossPlaysets = options.toolsInAnyPlayset;
     experienceMultiplier = options.testExperienceMultiplier >= 1 && options.testExperienceMultiplier <= 100 ? options.testExperienceMultiplier : 1;
     variantEvents = experienceEvents = 0;
     if (!installToolFreedom(base)) {
@@ -873,6 +978,8 @@ bool installCharacterFreedom(HMODULE host, const Config& options) {
         return false;
     }
     log("Gameplay: player tool menu, availability refresh and missing particle preload enabled across playsets.");
+    if (sharedToolsAcrossPlaysets)
+        log("Gameplay: ToolsInAnyPlayset enabled; native upgrades, unlocks and suppression retained (no tool grants).");
     if (trace) {
         if (codeMatches(base + 0xAFE260,
             "6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 08"))
@@ -913,7 +1020,8 @@ void removeCharacterFreedom() noexcept {
         std::pair{toolInitializeRva, &toolInitializeTraceInstalled}, std::pair{controlSetRva, &controlSetInstalled},
         std::pair{toolActionRva, &actionTraceInstalled}, std::pair{toolAssetRva, &toolAssetTraceInstalled},
         std::pair{toolUnlockedRva, &toolUnlockedInstalled}, std::pair{projectileCreateRva, &projectileTraceInstalled},
-        std::pair{emitterLookupRva, &emitterInstalled}}) {
+        std::pair{emitterLookupRva, &emitterInstalled}, std::pair{nextToolRva, &nextToolInstalled},
+        std::pair{refreshToolRva, &refreshToolInstalled}}) {
         if (!*installed) continue;
         auto* target = reinterpret_cast<void*>(installedBase + rva);
         MH_DisableHook(target);
@@ -934,6 +1042,7 @@ void removeCharacterFreedom() noexcept {
         awardTraceInstalled = false;
     }
     trace = false;
+    sharedToolsAcrossPlaysets = false;
     controlGet = nullptr;
     actorData = nullptr;
     stateDataType = nullptr;

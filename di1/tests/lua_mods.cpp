@@ -579,6 +579,111 @@ int main() {
         CHECK(evaluate(bare, ("Data.Sets[1].filters[3].desc == '" + original + "'").c_str()));
         lua_close(bare);
     }
+    {
+        Index triggers;
+        triggers.addBuiltinPatch({"bitmasks.lua", "contains:AV_AvatarPirates"}, "character_progression_filters",
+            std::string(crabe::di1::characterTriggerFiltersPatch), "{}");
+        CHECK(configure(api, std::move(triggers), &capture, false));
+        auto* bare = luaL_newstate();
+        luaL_openlibs(bare); // The fixture's recursive comparison helpers use globals.
+        const std::string source = R"lua(
+Data={Package='Core',Sets={{set='ActorType',masks={},filters={
+ {filter='AV_AvatarIncredibles',UID=64,desc='AV_Dash|AV_ElastiGirl|AV_Frozone|AV_MrIncredible|AV_Syndrome|AV_Violet'},
+ {filter='AV_AvatarLoneRanger',UID=146,desc='AV_LoneRanger|AV_Tonto'},
+ {filter='AV_AvatarMonsters',UID=192,desc='AV_Mike|AV_Randall|AV_Sully'},
+ {filter='AV_AvatarPirates',UID=215,desc='AV_Barbossa|AV_DavyJones|AV_JackSparrow'},
+ {filter='AV_AvatarToyBox',UID=2935,desc='AV_Anna|AV_Elsa|AV_JackSkellington|AV_MickeyMouse|AV_Perry|AV_Phineas|AV_Ralph|AV_Rapunzel|AV_Vanellope'},
+ {filter='AV_AvatarToyStory',UID=263,desc='AV_Blockhead|AV_Buzz|AV_Jessie|AV_Woody|AV_Zurg'},
+ {filter='AV_AvatarCars',UID=255,desc='AV_McQueen'},
+ {filter='AV_AvatarMount',UID=292,desc='AV_Bullseye|AV_Silver'},
+ {filter='AV_AvatarVehicle',UID=187,desc='AV_Corvette'},
+ {filter='AV_AvatarIntro',UID=3725,desc='AV_Spark|AV_Sparkman'},
+ {filter='KeepNPC',UID=10000,desc='AV_Blockhead'},
+},metafilters={{filter='AV_AvatarBiped',UID=144,desc='AV_Proxy|AV_AvatarIntro|AV_AvatarIncredibles|AV_AvatarLoneRanger|AV_AvatarMonsters|AV_AvatarPirates|AV_AvatarToyBox|AV_AvatarToyStory'}}}}}
+local actors=Data.Sets[1]; local seen={AV_Proxy=true}
+for _,row in ipairs(actors.filters) do
+ for key in string.gmatch(row.desc,'[^|]+') do seen[key]=true end
+end
+for key in pairs(seen) do actors.masks[#actors.masks+1]={mask=key} end
+function clone(v) if type(v)~='table' then return v end local r={} for k,x in pairs(v) do r[k]=clone(x) end return r end
+function equal(a,b) if type(a)~=type(b) then return false end if type(a)~='table' then return a==b end
+ for k,v in pairs(a) do if not equal(v,b[k]) then return false end end
+ for k in pairs(b) do if a[k]==nil then return false end end return true end
+Before=clone(Data)
+function progressionOK()
+ for i=1,6 do
+  local row=actors.filters[i]; local members={}
+  for key in string.gmatch(row.desc,'[^|]+') do if members[key] then return false end members[key]=true end
+  for key in pairs(seen) do
+   if key~='AV_Proxy' and key~='AV_Spark' and key~='AV_Sparkman' and key~='AV_Frozone' and key~='AV_Blockhead'
+    and key~='AV_McQueen' and key~='AV_Bullseye' and key~='AV_Silver' and key~='AV_Corvette' and not members[key] then return false end
+  end
+  if members.AV_McQueen or members.AV_Bullseye or members.AV_Silver or members.AV_Corvette or members.AV_Proxy then return false end
+ end
+ local normalized=clone(Data)
+ for i=1,6 do normalized.Sets[1].filters[i].desc=Before.Sets[1].filters[i].desc end
+ return equal(normalized,Before)
+end
+)lua";
+        CHECK(run(bare, source.c_str(), "@gamedb/core/bitmasks.lua") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "progressionOK()"));
+        CHECK(run(bare, "Second=clone(Data) -- AV_AvatarPirates", "") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "equal(Second,Data)"));
+        for (const char* edit : {
+            "Data.Package='Toybox'", "Data.Sets[1].filters[6].UID=999",
+            "Data.Sets[1].filters[6].desc='CustomModFilter'",
+            "Data.Sets[1].metafilters[1].desc='AV_AvatarBiped'",
+            "Data.Sets[1].metafilters[1].desc='AV_Dash||AV_Violet'",
+            "Data.Sets[1].metafilters[1].desc='AV_McQueen'",
+            "Data.Sets[1].filters[12]=Data.Sets[1].filters[1]",
+            "Data.Sets[2]=Data.Sets[1]"}) {
+            CHECK(run(bare, (source + edit + ";Before=clone(Data)").c_str(), "@gamedb/core/bitmasks.lua") == 0);
+            lua_settop(bare, 0);
+            CHECK(evaluate(bare, "equal(Before,Data)"));
+        }
+        CHECK(configure(api, Index{}, &capture, false));
+        CHECK(run(bare, source.c_str(), "@gamedb/core/bitmasks.lua") == 0);
+        lua_settop(bare, 0);
+        CHECK(evaluate(bare, "equal(Before,Data)"));
+        lua_close(bare);
+    }
+    {
+        Index scare;
+        scare.addBuiltinPatch({"test_actor.lua"}, "scare_actor", std::string(crabe::di1::characterScareActorPatch), "{}");
+        scare.addBuiltinPatch({"test_map.lua"}, "scare_map", std::string(crabe::di1::characterScareDependenciesPatch), "{}");
+        scare.addBuiltinPatch({"test_icon.lua"}, "scare_icon", std::string(crabe::di1::characterScareIconPatch), "{}");
+        scare.addBuiltinPatch({"test_weapon.lua"}, "scare_weapon", std::string(crabe::di1::characterScareWeaponPatch), "{}");
+        CHECK(configure(api, std::move(scare), &capture, false));
+        CHECK(run(state, "Data={Type='ActorList',Records={{Name='tool_megaphone',Type='Other',SubType='ItemsAndProps',Parms='DNAFile=characters/Megaphone.dnax;'}}}", "@test_actor.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "#Data.Records==2 and Data.Records[1].Name=='tool_megaphone' and Data.Records[2].Name=='tool_literalcrabmegaphone' and Data.Records[2].Parms=='DNAFile=characters/LiteralCrab_Megaphone.dnax;'"));
+        CHECK(run(state, "-- repeat", "@test_actor.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "#Data.Records==2"));
+        CHECK(run(state, "DataMap={Actor={tool_megaphone={Files={'DNA|characters/Megaphone.dnax'}},tool_blaster={Files={'DNA|CHARACTERS/BLASTER.DNAX','Entity|characters/avatar_tools/Blaster','Script|characters/Blaster.sx','Cho|original'}}},Playset={_loadforallplaysets_={Includes={'original|Include'}}}}", "@test_map.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "DataMap.Actor.tool_literalcrabmegaphone.Files[1]=='DNA|characters/LiteralCrab_Megaphone.dnax' and DataMap.Actor.tool_literalcrabmegaphone.Files[2]=='Entity|characters/Avatar_Tools/MU_Megaphone' and DataMap.Actor.tool_literalcrabmegaphone.Files[3]=='Script|characters/LiteralCrab_Megaphone.sx' and DataMap.Actor.tool_literalcrabmegaphone.Files[4]=='Cho|original' and DataMap.Actor.tool_blaster.Files[1]=='DNA|CHARACTERS/BLASTER.DNAX' and #DataMap.Playset._loadforallplaysets_.Includes==2"));
+        CHECK(run(state, "-- repeat", "@test_map.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "#DataMap.Playset._loadforallplaysets_.Includes==2 and #DataMap.Actor.tool_literalcrabmegaphone.Files==6 and DataMap.Actor.tool_literalcrabmegaphone.Files[5]=='Audio|MU_Mike.fev' and DataMap.Actor.tool_literalcrabmegaphone.Files[6]=='Cho|choreographies/mu_scare_green/mu_scare_green'"));
+        CHECK(run(state, "DataMap={Actor={tool_megaphone={}}}", "@test_map.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "DataMap.Actor.tool_literalcrabmegaphone==nil"));
+        CHECK(run(state, "ToolSelect={GetIconPath=function(self,name) return 'icon:'..name end}", "@test_icon.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "ToolSelect:GetIconPath('ITEM_LITERALCRAB_MEGAPHONE')=='icon:ITEM_MIKE' and ToolSelect:GetIconPath('PROP_INVISIBILITY')=='icon:PROP_INVISIBILITY'"));
+        CHECK(run(state, "weapon={{name='SullyComboX',class='gun',typeCC='sulx',projectile='SullyComboX',maxAmmo=-1},{name='OtherWeapon',typeCC='othr'}}; originalScareWeapon=weapon[1]", "@test_weapon.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "#weapon==3 and weapon[1]==originalScareWeapon and weapon[1].name=='SullyComboX' and weapon[2].name=='OtherWeapon' and weapon[3]~=weapon[1] and weapon[3].name=='LCRMUScare' and weapon[3].typeCC=='sulx' and weapon[3].projectile=='SullyComboX' and weapon[3].maxAmmo==-1"));
+        CHECK(run(state, "-- repeat", "@test_weapon.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "#weapon==3"));
+        CHECK(run(state, "weapon={{name='SullyComboX',class='gun',typeCC='wrong',projectile='SullyComboX'}}", "@test_weapon.lua") == 0);
+        lua_settop(state, 0);
+        CHECK(evaluate(state, "#weapon==1"));
+    }
     lua_close(state);
     fs::remove_all(root);
     if (failures) return 1;

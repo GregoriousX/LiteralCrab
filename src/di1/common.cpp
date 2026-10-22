@@ -73,6 +73,11 @@ void openLogAndConfig(HMODULE module) {
     if (limitScale >= 1 && limitScale <= 100) settings.toyBoxLimitScale = limitScale;
     else log("Invalid ToyBox LimitScale; using the game's limits.");
     settings.charactersInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"CharactersInAnyPlayset", 0, iniPath) != 0;
+    settings.toolsInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"ToolsInAnyPlayset", 0, iniPath) != 0;
+    if (settings.toolsInAnyPlayset && !settings.charactersInAnyPlayset) {
+        log("Gameplay: ToolsInAnyPlayset needs CharactersInAnyPlayset=1; tool world filters unchanged.");
+        settings.toolsInAnyPlayset = false;
+    }
     settings.traceCharacterFreedom = GetPrivateProfileIntW(L"Gameplay", L"TraceCharacterFreedom", 0, iniPath) != 0;
     const auto experienceScale = GetPrivateProfileIntW(L"Gameplay", L"TestExperienceMultiplier", 1, iniPath);
     if (experienceScale >= 1 && experienceScale <= 100) settings.testExperienceMultiplier = experienceScale;
