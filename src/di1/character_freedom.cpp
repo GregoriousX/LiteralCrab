@@ -72,6 +72,7 @@ namespace {
     ModelRequest originalModelRequest{};
     ToolName currentTool{}, defaultTool{};
     ToolInitialize originalToolInitialize{};
+    void (*beforeToolInitialize)(void*) noexcept {};
     bool toolRuleTraceInstalled{}, modelTraceInstalled{}, toolInitializeTraceInstalled{};
     volatile LONG toolRuleEvents{}, modelEvents{}, toolInitializeEvents{};
     constexpr std::uint32_t controlSetRva = 0xB30000, toolActionRva = 0xC1E1C0;
@@ -633,6 +634,7 @@ namespace {
         if (report) traceToolState(tools, "after rule");
     }
     void __fastcall traceToolInitialize(void* self, void*) {
+        if (beforeToolInitialize) beforeToolInitialize(self);
         originalToolInitialize(self);
         if (InterlockedIncrement(&toolInitializeEvents) <= 64) {
             traceToolState(self, "initialized");
@@ -1005,6 +1007,12 @@ ToolQueryHook characterToolQueryHook() noexcept {
     return {reinterpret_cast<const void*>(originalToolUnlocked), reinterpret_cast<const void*>(&allowToolUnlocked)};
 }
 
+bool beforeCharacterToolInitialization(void (*callback)(void*) noexcept) noexcept {
+    if (!toolInitializeTraceInstalled || !callback || (beforeToolInitialize && beforeToolInitialize != callback)) return false;
+    beforeToolInitialize = callback;
+    return true;
+}
+
 void addCharacterFreedomAdapters(mods::LuaApi& api) {
     if (!active) return;
     lua.toLString = api.toLString;
@@ -1015,6 +1023,7 @@ void addCharacterFreedomAdapters(mods::LuaApi& api) {
 
 void removeCharacterFreedom() noexcept {
     if (!installedBase) return;
+    beforeToolInitialize = nullptr;
     removeCharacterParticles();
     for (auto [rva, installed] : {std::pair{toolRuleRva, &toolRuleTraceInstalled}, std::pair{modelRequestRva, &modelTraceInstalled},
         std::pair{toolInitializeRva, &toolInitializeTraceInstalled}, std::pair{controlSetRva, &controlSetInstalled},

@@ -194,6 +194,9 @@ const AssetMember* AssetIndex::member(std::string_view name) const noexcept {
 }
 
 bool AssetIndex::read(const AssetMember& item, std::string& data) const noexcept {
+    if (item.generated) {
+        try { data = *item.generated; return true; } catch (...) { return false; }
+    }
     if (!item.package) return readFile(item.file, data);
     try {
         data = item.package->read(item.package->entries()[item.entry]);  // Verifies the CRC.

@@ -25,6 +25,9 @@ struct AssetMember {
     std::shared_ptr<const zip::Archive> package;
     std::size_t entry{};
     std::uint16_t mod{};
+    // Host-generated resources (for example a portrait bundle referring to a
+    // texture already shipped with the game). Immutable for loader threads.
+    std::shared_ptr<const std::string> generated;
 };
 
 class AssetIndex {

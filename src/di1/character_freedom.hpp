@@ -12,6 +12,8 @@ bool installCharacterFreedom(HMODULE host, const Config& options);
 // True once the native half is in place; the ownership/FX patch is only registered then.
 bool characterFreedomActive() noexcept;
 ToolQueryHook characterToolQueryHook() noexcept;
+// Reuse the owned initialization trace hook when it is active.
+bool beforeCharacterToolInitialization(void (*callback)(void*) noexcept) noexcept;
 // Undo this feature if the script loader cannot install its data half.
 void removeCharacterFreedom() noexcept;
 void addCharacterFreedomAdapters(mods::LuaApi& api);
