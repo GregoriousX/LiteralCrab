@@ -13,6 +13,7 @@
 #include "di1/character_assets.hpp"
 #include "di1/character_loadout.hpp"
 #include "di1/avatar_motion.hpp"
+#include "di1/custom_tools.hpp"
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
 #include "di1/toybox_share.hpp"
@@ -35,6 +36,7 @@ namespace {
     DictionaryText originalDictionaryText{};
     const char* __fastcall scareDictionaryText(void* self, void*, const char* key, unsigned first, unsigned second) {
         if (const auto* text = customCharacterText(key)) return text;
+        if (const auto* text = customToolText(key)) return text;
         return originalDictionaryText(self, scareToolLabelKey(key), first, second);
     }
     bool installScareLabel(HMODULE host) {
@@ -254,13 +256,14 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
     template <class T> void bind(T& slot, std::uintptr_t address) { slot = reinterpret_cast<T>(address); }
 
     void installAssets(HMODULE host, const std::wstring& modsRoot, const std::vector<mods::Mod>& list,
-        std::vector<CustomFigure>& figures, std::vector<std::string>& messages) {
+        std::vector<CustomFigure>& figures, std::vector<CustomTool>& tools, std::vector<std::string>& messages) {
         const bool trace = config().modTrace;
         wchar_t executable[32768]{};
         const auto length = GetModuleFileNameW(host, executable, 32768);
         const wchar_t* slash = length && length < 32768 ? wcsrchr(executable, L'\\') : nullptr;
         if (list.empty() || !slash) {
             figures.clear();
+            tools.clear();
             if (trace || config().traceCharacterFreedom) installAssetLoader(host, nullptr, trace);
             return;
         }
@@ -268,8 +271,13 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         const auto started = GetTickCount64();
         auto assets = mods::AssetIndex::build(gameAssets, modsRoot + L"\\.cache", list, messages);
         prepareCustomAssetDirectories(assets, figures, messages);
+        prepareCustomTools(assets, gameAssets, tools, figures, messages);
         prepareCustomCharacterGameplay(assets, gameAssets, figures, messages);
         prepareCustomCharacterAssets(assets, gameAssets, figures, messages);
+        std::erase_if(tools,[&](CustomTool& t) {
+            std::erase_if(t.targetSkus,[&](auto sku) {return std::none_of(figures.begin(),figures.end(),[&](const auto& f){return f.sku==sku;});});
+            return t.targetSkus.empty();
+        });
         const auto redirects = assets.redirects.size(), members = assets.members.size();
         bool audioBanks{};
         for (const auto& asset : assets.redirects)
@@ -280,6 +288,7 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         if ((members || trace || config().traceCharacterFreedom) && !installAssetLoader(host, members ? &mods::readAssetMember : nullptr, trace) && members) {
             messages.push_back("Mods: files inside the game's archives cannot be replaced on this build.");
             figures.clear();
+            tools.clear();
         }
         if (audioBanks && config().traceAudioBanks && !installAudioBankTrace(host))
             messages.push_back("Mods: native audio-bank diagnostics unavailable on this profile.");
@@ -313,9 +322,11 @@ bool installMods(HMODULE host) {
         const auto modsRoot = std::wstring(pluginDirectory()) + L"mods";
         auto index = mods::Index::load(modsRoot, messages);
         auto figures = loadCustomFigures(index.mods, messages);
-        if (!figures.empty() && !installScareLabel(host)) {
+        auto tools = loadCustomTools(index.mods, messages);
+        if ((!figures.empty() || !tools.empty()) && !installScareLabel(host)) {
             messages.push_back("Custom figures unavailable: localized label hook differs; definitions left inactive.");
             figures.clear();
+            tools.clear();
         }
         // Assets do not depend on the Lua profile: they only redirect files the game opens.
         auto assetMods = index.mods;
@@ -327,15 +338,18 @@ bool installMods(HMODULE host) {
         const bool scareTool = std::any_of(assetMods.begin(), assetMods.end(), [](const mods::Mod& mod) {
             return mod.folder == "literalcrab_mu_scare";
         });
-        installAssets(host, modsRoot, assetMods, figures, messages);
+        installAssets(host, modsRoot, assetMods, figures, tools, messages);
         if (!installCustomLoadouts(host, figures, &beforeCharacterToolInitialization)) {
             messages.push_back("Custom gameplay unavailable: native loadout profile differs; gameplay figures left inactive.");
             std::erase_if(figures, [](const CustomFigure& f) { return f.gameplay.enabled(); });
+            tools.clear();
         }
         setCustomCharacterLabels(figures);
+        setCustomToolLabels(tools);
         addCustomCharacterPatches(index, figures);
         addCustomGameplayPatches(index, figures);
         addCustomAssetPatches(index, figures);
+        addCustomToolPatches(index, tools);
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
         if (characterFreedomActive()) {

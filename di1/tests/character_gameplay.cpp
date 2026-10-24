@@ -242,9 +242,42 @@ static void pure() {
     CHECK(run(state,"assert(DataMap.Actor.av_zurg.Files[2]=='Entity|characters/TS_Zurg/TS_Zurg'); assert(DataMap.Actor.lcr_zurg.Files[2]=='Entity|characters/literalcrab/assets/1000900/characters/ts_zurg/ts_zurg')"));
     lua_close(state);
 }
+// Converted NPC / cut-avatar output: template rows with swapped model entries,
+// exact start slots and the author's data-only overlay.
+static void conversion() {
+    auto* state=luaL_newstate();luaL_openlibs(state);
+    auto f=figure();
+    f.name="LiteralCrab_Ferb";f.actor="lcr_ferb";f.gameplay.sourceActor.clear();f.gameplay.sourceDna="characters/PNF_Ferb.dnax";
+    f.gameplay.item.clear();f.gameplay.prop="PROP_PHINEAS";f.gameplay.preloadActors.clear();f.gameplay.preloadFiles.clear();
+    f.gameplay.expectedMask="AV_Ferb";f.gameplay.exactLoadout=true;
+    f.gameplay.rowSource="pnf_phineas";f.gameplay.rowSourceDna="characters/PNF_Phineas.dnax";f.gameplay.stripModelDef=true;
+    f.gameplay.fileReplacements={{"entity|characters/pnf_phineas/pnf_phineas","Entity|characters/PNF_Ferb/PNF_Ferb"},
+        {"entity|characters/pnf_phineas/pnf_phineas_pieces",""}};
+    f.gameplay.bodyPatch="DNA.AgentGadgets.Identification.ActorTypeMask='AV_Phineas'\n";
+    f.gameplay.overlayPatch=dnaOverlayPatch("-- author\nDNA={AgentGadgets={Health={health=500},TargetMode={TargetingNormalOffset={-1,2,0}}}}\n"
+        "Remove={'AgentGadgets.DynamicExploder.dynexp_pieceFile'}\n","LiteralCrab_Ferb");
+    CHECK(run(state,"DNA={AgentGadgets={Identification={ActorTypeMask='AV_Ferb'},Health={health=100,regenerateRate=10},"
+        "TargetMode={TargetingNormalOffset={-0.9,2,0,7}},DynamicExploder={dynexp_reassemble=1,dynexp_pieceFile='characters/PNF_Perry/PNF_Perry_Pieces'}},"
+        "Components={ToolSetManager={AutoStartTool1='ITEM_FERB',AutoStartTool2='PROP_FERB'}}}"));
+    CHECK(run(state,patch(customGameplayDnaPatch(f))));
+    CHECK(run(state,"local t=DNA.Components.ToolSetManager;assert(t.AutoStartTool1==nil and t.AutoStartTool2=='PROP_PHINEAS' and t.LiteralCrabFigure=='LiteralCrab_Ferb')"));
+    CHECK(run(state,"local g=DNA.AgentGadgets;assert(g.Identification.ActorTypeMask=='AV_Phineas' and g.Health.health==500 and g.Health.regenerateRate==10)"));
+    CHECK(run(state,"local o=DNA.AgentGadgets.TargetMode.TargetingNormalOffset;assert(o[1]==-1 and o[4]==nil);assert(DNA.AgentGadgets.DynamicExploder.dynexp_pieceFile==nil)"));
+    CHECK(run(state,"Data={Records={{Name='pnf_phineas',Type='Avatar',Parms='DNAFile=characters/PNF_Phineas.dnax; modelDef=Avatar_Phineas; Other=1;'}}}"));
+    CHECK(run(state,patch(customGameplayActorPatch({f}))));
+    CHECK(run(state,"assert(#Data.Records==2 and Data.Records[2].Parms=='DNAFile=characters/literalcrab/literalcrab_ferb.dnax; Other=1;')"));
+    CHECK(run(state,"DataMap={Actor={pnf_phineas={Files={'DNA|characters/PNF_Phineas.dnax','Entity|characters/PNF_Phineas/PNF_Phineas','Entity|characters/PNF_Phineas/PNF_Phineas_Pieces','Script|x.sx'}}}}"));
+    CHECK(run(state,patch(customGameplayDependenciesPatch({f}))));
+    CHECK(run(state,"local r=DataMap.Actor.lcr_ferb.Files;assert(#r==3 and r[1]=='DNA|characters/literalcrab/literalcrab_ferb.dnax' and r[2]=='Entity|characters/PNF_Ferb/PNF_Ferb' and r[3]=='Script|x.sx');assert(#DataMap.Actor.pnf_phineas.Files==4)"));
+    // Overlays are data only: code, other globals and malformed removals are rejected.
+    for(const char* bad:{"DNA=f()","Other={}","DNA={a=1+1}","Remove={'a..b'}","Remove={x=1}","DNA='text'"}) {
+        bool threw{};try{(void)dnaOverlayPatch(bad,"x");}catch(const std::exception&){threw=true;}CHECK(threw);
+    }
+    lua_close(state);
+}
 static void write(const fs::path& path,const std::string& bytes){fs::create_directories(path.parent_path());std::ofstream(path,std::ios::binary).write(bytes.data(),bytes.size());}
 int main(int argc,char** argv){
-    pure();runtime();inventory();respawnBehavior();
+    pure();runtime();inventory();respawnBehavior();conversion();
     if(argc==4){
         std::vector<std::string> messages;auto index=crabe::mods::Index::load(fs::path(argv[2]).wstring(),messages);
         auto figures=loadCustomFigures(index.mods,messages);

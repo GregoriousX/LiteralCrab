@@ -98,6 +98,33 @@ static void manifestPolicy() {
     CHECK(loadCustomFigures({mod(manifest(zurg())+gameplay)},messages).empty());
     figures = loadCustomFigures({mod(manifest(privateFigure) + gameplay)}, messages);
     CHECK(figures.size()==1 && figures[0].gameplay.item=="ITEM_ZURG_BOSS_BLASTER" && figures[0].gameplay.preloadFiles.size()==2);
+    // Minimal manifests: identity and source; everything else has defaults.
+    figures = loadCustomFigures({mod("[Character]\nName=LiteralCrab_Butch\nSource=butch\n")}, messages);
+    CHECK(figures.size() == 1);
+    if (!figures.empty()) {
+        const auto& f = figures[0];
+        CHECK(f.sku == defaultFigureSku("LiteralCrab_Butch") && f.sku >= 1000100 && f.sku <= 1999999);
+        CHECK(f.gateway == "LCR_LiteralCrab_Butch" && f.actor == f.gateway && f.displayName == f.name);
+        CHECK(f.icon == "ui/charactericons/blankavatar" && f.baseCharacter.empty() && f.gameplay.sourceActor == "butch");
+        CHECK(f.gameplay.enabled() && f.gameplay.sourceDna.empty() && f.gameplay.body == BodyMode::Auto);
+    }
+    figures = loadCustomFigures({mod("[Character]\nName=LCR_Ferb\nSource=characters/PNF_Ferb.dnax\nTemplate=PNF_Phineas\nAnimations=template\n")}, messages);
+    CHECK(figures.size() == 1 && figures[0].gateway == "LCR_Ferb" && figures[0].gameplay.sourceDna == "characters/PNF_Ferb.dnax" &&
+        figures[0].gameplay.templateFigure == "PNF_Phineas" && figures[0].gameplay.animations == AnimationMode::Template);
+    figures = loadCustomFigures({mod("[Character]\nName=PortalOnly\nGateway=LCR_PortalOnly\n")}, messages);
+    CHECK(figures.size() == 1 && figures[0].baseCharacter == "AV_Buzz" && !figures[0].gameplay.enabled());
+    for (const char* bad : {"Template=AV_McQueen\n", "Body=npc\n", "Animations=all\n", "DNA=../outside.lua\n", "DNA=missing.lua\n"})
+        CHECK(loadCustomFigures({mod(std::string("[Character]\nName=Bad\nSource=butch\n") + bad)}, messages).empty());
+    CHECK(loadCustomFigures({mod("[Character]\nName=Both\nSource=butch\n[Character.Gameplay]\nSourceActor=butch\n")}, messages).empty());
+    CHECK(loadCustomFigures({mod("[Character]\nName=NoSource\nTemplate=AV_Buzz\n")}, messages).empty());
+    // A data-only Lua overlay is validated at startup, before any registration.
+    auto overlay = mod("[Character]\nName=Overlay\nSource=butch\nDNA=butch.lua\n");
+    write(fs::path(overlay.path) / "butch.lua", "DNA = { AgentGadgets = { Health = { health = 600 } } }\n");
+    figures = loadCustomFigures({overlay}, messages);
+    CHECK(figures.size() == 1 && figures[0].gameplay.overlayPatch.find("health") != std::string::npos);
+    write(fs::path(overlay.path) / "butch.lua", "DNA = { AgentGadgets = { Health = { health = os.time() } } }\n");
+    messages.clear();
+    CHECK(loadCustomFigures({overlay}, messages).empty() && logged(messages, "data-only"));
     figures = loadCustomFigures({mod(manifest(privateFigure) + gameplay + "ItemControlSource=ITEM_BLASTER\nItemDisplayName=Zurg Blaster\n")}, messages);
     CHECK(figures.size()==1 && figures[0].gameplay.controlSources[0]=="ITEM_BLASTER" && figures[0].gameplay.toolDisplayNames[0]=="Zurg Blaster");
     figures=loadCustomFigures({mod(manifest(privateFigure)+gameplay+"InventorySource=AV_Buzz\nInventoryExclude=ITEM_BUZZ,ABILITY_BUZZ\nProp=PROP_BUZZ\nPreloadIncludes=biped_avatar\n")},messages);

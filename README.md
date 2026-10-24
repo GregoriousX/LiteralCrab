@@ -27,6 +27,7 @@ Every option outside the display fixes is **off by default**. With the default s
 - Script mods: replace or patch the game's Lua scripts without editing game files.
 - Asset mods: replace models, textures, sounds and other files with loose files or ordinary ZIPs. The game's archives are never rebuilt.
 - Verified engine adapters and features for mods, such as awarding tools, placing power discs or restoring console Toy Box Hub menus.
+- Custom portal characters and tools: a character needs a name and a native source actor (NPCs and cut avatars included); its player body, inventory, equipment and animations are prepared privately from the game's own data.
 
 See the [modding guide](di1/MODDING.md).
 

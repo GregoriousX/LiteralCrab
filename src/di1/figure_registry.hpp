@@ -15,6 +15,14 @@ struct CustomItemWeapon {
     std::string actor, privateDna, privateScript, privateWeapon;
     bool enabled() const noexcept { return !source.empty(); }
 };
+// How the private player DNA is built. Auto uses the source DNA when it is
+// already a player avatar, otherwise the template's player DNA with the
+// source's visual identity grafted onto it.
+enum class BodyMode { Auto, Source, Template };
+// How the private model gets the player animation sets the avatar tree uses.
+// Complete appends the template's missing groups to the source model; Template
+// binds the source mesh to the template's whole animation entity.
+enum class AnimationMode { Auto, Source, Complete, Template };
 struct CustomGameplay {
     std::string sourceActor, sourceDna, item, prop, ability;
     std::vector<std::string> preloadActors, preloadFiles;
@@ -29,10 +37,31 @@ struct CustomGameplay {
     // Ordered native tool indices, ending in ~0u, plus the expected row IDs.
     // Only used for marked private avatars; source profiles remain unchanged.
     std::vector<std::uint32_t> inventoryRows, inventoryHashes;
+    // Standalone [Tool] declarations grant only these private avatar entries.
+    // Resolved at startup; never parsed from Character.Gameplay row numbers.
+    std::vector<std::string> extraTools;
     std::vector<std::string> preloadIncludes;
     // Private native Avatar tree with zero-piece death event ordering repaired.
     std::string respawnBehavior;
-    bool enabled() const noexcept { return !sourceDna.empty(); }
+    // Stock playable figure supplying the player body, animations and basic
+    // inventory when the source lacks them. Empty: BaseCharacter, then automatic.
+    std::string templateFigure;
+    BodyMode body{BodyMode::Auto};
+    AnimationMode animations{AnimationMode::Auto};
+    // Author Lua: a data-only DNA table merged into the private DNA, and an
+    // optional script run on it afterwards (mod-relative paths).
+    std::string dnaOverlay, dnaScript, dnaScriptSource;
+    // Resolved at startup from native data (never manifest row numbers).
+    std::string sourceMask;              // Source ActorTypeMask, the native profile key.
+    std::string expectedMask;            // ActorTypeMask the private DNA must carry.
+    std::string rowSource, rowSourceDna; // Native actor/dependency rows cloned for the private actor.
+    std::string bodyDna;                 // DNA whose bytes become the private DNA.
+    std::string bodyPatch;               // Lua grafting source identity / model fixes.
+    std::string overlayPatch;            // Lua applying the validated author overlay.
+    std::vector<std::pair<std::string, std::string>> fileReplacements; // "kind|path" (lower) -> file, "" removes.
+    bool stripModelDef{};                // Template rows' modelDef would select the template's model.
+    bool exactLoadout{};                 // AutoStartTool1..3 become exactly item/prop/ability.
+    bool enabled() const noexcept { return !sourceDna.empty() || !sourceActor.empty(); }
 };
 struct CustomFigure {
     std::uint32_t sku{};
@@ -58,4 +87,11 @@ std::string_view customFigureGatewayMarker();
 // depend on the one-based array position; they differ from the original CrabeLoader format.
 std::string encryptFigureString(std::string_view value, std::uint32_t row);
 std::string encryptFigureNumber(double value, std::uint32_t row);
+// Stable default SkuId for a Name: 1000100..1999999.
+std::uint32_t defaultFigureSku(std::string_view name);
+// Stock playable bipeds usable as body/animation/inventory templates.
+bool templateFigure(std::string_view gateway);
+const std::vector<std::string_view>& templateFigures();
+// Validated Lua overlay (global DNA table and optional Remove list) as patch code.
+std::string dnaOverlayPatch(std::string_view source, std::string_view label);
 }

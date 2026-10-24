@@ -68,34 +68,130 @@ Mods are combined per file. If two mods provide the same file, the first in load
 
 ## Custom characters / Własne postacie
 
-An enabled mod can add one separate figure to the virtual portal through `[Character]` in `mod.ini`. `[Character.Gameplay]` creates its private player actor/DNA and configures native equipment. The loader handles figure registration, portal entry, display name, fitted portraits and the private gameplay records. No Lua patch or rebuilt original archive is required for this declaration. Enable `[Mods] Enabled=1` in LiteralCrab.ini, put the mod beside the ASI under `mods`, and restart after changes.
+An enabled mod can add one separate figure to the virtual portal through `[Character]` in `mod.ini`. With `Source=`, the figure gets its own private player actor, DNA, inventory and model. LiteralCrab reads the installed game's data at startup and fills in everything else, so a basic character needs its identity and the native actor it is made from. No Lua patch, DNAX file or rebuilt archive is required. Enable `[Mods] Enabled=1` in LiteralCrab.ini, put the mod beside the ASI under `mods`, and restart after changes.
 
-PL: Jeden mod może dodać jedną osobną figurkę przez `[Character]`. Sekcja `[Character.Gameplay]` tworzy prywatnego aktora/DNA gracza i ustala wyposażenie. LiteralCrab obsługuje rejestrację, wpis w portalu, nazwę, dopasowany portret i prywatne rekordy rozgrywki. Sama deklaracja nie wymaga skryptu Lua ani przebudowy oryginalnych archiwów. Włącz `[Mods] Enabled=1`, umieść folder w `mods` i po zmianach uruchom grę ponownie.
+PL: Mod może dodać jedną osobną figurkę przez `[Character]`. `Source=` tworzy prywatnego aktora gracza, DNA, ekwipunek i model. LiteralCrab odczytuje dane zainstalowanej gry i uzupełnia resztę, więc podstawowa postać wymaga tylko tożsamości i natywnego aktora źródłowego. Nie są potrzebne skrypty Lua, pliki DNAX ani przebudowane archiwa. Włącz `[Mods] Enabled=1`, umieść folder w `mods` i po zmianach uruchom grę ponownie.
 
-### Zurg manifest example / Przykładowy manifest Zurga
-
-This example uses the installed game's Zurg portrait. `AssetDirectory` must exist and contain the native resources you supply locally, for example the source DNA and blaster files shown below. Omit `AssetDirectory` if using only installed resources. The completed local Zurg test also includes a compatible model bundle with the missing Toy Box animation aliases and corrected hoverboard socket; the manifest alone does not author those model changes.
-
-PL: Przykład korzysta z ikony Zurga dostępnej w instalacji. Folder `AssetDirectory` musi istnieć i zawierać własne lokalne zasoby, np. pokazane niżej DNA i pliki blastera. Pomijaj to pole, jeśli używasz wyłącznie zasobów instalacji. Gotowy lokalny test Zurga zawiera też model z brakującymi aliasami animacji Toy Boksa i poprawionym mocowaniem deski. Sam manifest nie wprowadza tych zmian w modelu.
-
-```text
-mods/my_zurg/
-├── mod.ini
-└── character-assets/
-    └── characters/
-        ├── ts_zurg.dnax
-        ├── zurgbossblaster.dnax
-        ├── zurgbossblaster.sx
-        └── ts_zurg/...       <- optional coherent model bundle and dependencies
-```
+### Quick start / Szybki start
 
 ```ini
 [Mod]
-Name=Custom Zurg
+Name=Butch
 Enabled=1
 
 [Character]
-AssetDirectory=character-assets
+Name=LiteralCrab_Butch
+Source=butch
+DisplayName=Butch
+```
+
+That is a complete character. `Source` names a native actor row (here the Lone Ranger enemy `butch`) or, for an actor without a row, its DNA file (`Source=characters/PNF_Ferb.dnax`). `LiteralCrab.log` lists every decision the loader made, for example:
+
+```text
+Custom gameplay LiteralCrab_Butch: Template LR_LoneRanger chosen automatically (83 shared animation files); set Template to override
+Custom gameplay LiteralCrab_Butch: source tool profile is incomplete; using LR_LoneRanger's basic inventory
+Custom gameplay LiteralCrab_Butch: starting equipment PROP_LONERANGER chosen automatically
+Custom gameplay LiteralCrab_Butch: non-player source: LR_LoneRanger's player body with characters/Butch.dnax's model and identity
+Custom gameplay LiteralCrab_Butch: player entity built from LR_LoneRanger's animation sets for characters/LR_Butch/LR_Butch (662 files)
+```
+
+PL: To pełna definicja postaci. `Source` wskazuje natywny wiersz aktora (tu przeciwnika `butch` z Lone Rangera) albo, gdy aktor nie ma wiersza, jego plik DNA. Każdą automatyczną decyzję loader zapisuje w `LiteralCrab.log`.
+
+### What is prepared automatically / Co loader przygotowuje automatycznie
+
+Each step uses verified native data and can be overridden with the setting in brackets. Ambiguous cases are errors that name the setting to add; nothing is guessed silently and a rejected character is never partly registered.
+
+| Step | Automatic behavior |
+| --- | --- |
+| Source DNA | The actor row's `DNAFile` (`SourceDNA`). A `.dnax` path works for actors without a row. |
+| Player body | A source DNA with the avatar gadget, controller mapping, tool manager and `characters/Avatar.btx` tree is used as is. Otherwise (NPCs, bosses) the template's player DNA is used and only the source's model, explosion pieces, name, dialog ID and scale are copied onto it (`Body=source|template`). |
+| Template | A stock playable biped supplying the player body, animations and basic inventory: `Template`, else a biped `BaseCharacter`, else the stock biped whose model shares the most animation files with the source model, else `AV_Buzz`. |
+| Actor type | The avatar controller drives only `PlayerControllable` actor types. A source type outside that filter (for example the undefined `AV_Ferb`) becomes the template's type on the private copy. |
+| Inventory | Native tool profiles are keyed by the DNA's `ActorTypeMask`. A source with a complete player profile (`ITEM_NONE`, `PROP_NONE`, `ABILITY_NONE`) keeps it. A source without one, or with an NPC profile, gets the template's profile without the template's own starting Item and Ability (`InventorySource`, `InventoryExclude`). Declared tools missing from both profiles are added. |
+| Starting equipment | Each empty slot uses the source DNA's own usable start tool; the Prop slot falls back to the template's body-only standard attack, such as `PROP_BUZZ` (`Item`, `Prop`, `Ability`). Start tools that do not exist in this build (for example `ITEM_FERB`) are removed. |
+| NPC tools | An Items tool without player control contexts (a boss weapon) borrows `ITEM_BLASTER`'s controls, targeting and HUD hints (`ItemControlSource`). |
+| Weapon clone | Any `ItemProjectile...` value clones the item's gun privately. Its tool DNA, script and gun are read from the item's tool actor (`ItemToolDNA`, `ItemToolScript`, `ItemWeaponSource`). Shipped projectile model and effect choreographies are preloaded. |
+| Rows and dependencies | The source's Avatar actor and dependency rows are cloned. A source without one (cut avatars, NPCs) clones the template's rows with its model and pieces entries replaced, and drops the template's `modelDef`. The shared `biped_avatar` include and the actors of declared tools are added (`PreloadActors`, `PreloadIncludes`, `PreloadFiles`). |
+| Player model | The avatar tree plays named animation sets that player entities define. A player entity missing some of the template's sets is completed with them; an entity without player sets, or a mesh without any entity, is bound to the template's whole animation entity (`Animations=source|complete|template`). |
+| Identity | `Gateway`/`Actor` default to `LCR_<Name>`, `SkuId` to a stable value derived from `Name`, `DisplayName` to `Name`, `Icon` to the generic `ui/charactericons/blankavatar`, and `BaseCharacter` to the template. |
+
+The generated player model is a private BENT entity that keeps the source mesh, materials and textures and borrows the template's channels, layout and animation sets. Every file it references is served lazily from the player's own game archives under `characters/literalcrab/assets/<SkuId>/...`, with private texture keys. Stock entities, actor rows, profiles, tools and the source NPC are never changed. A model you supply in `AssetDirectory` at the same logical path replaces the generated one. Shared animation sets are not retargeting: a rig with different proportions plays the template's motions as they are.
+
+PL: Każdy krok korzysta ze zweryfikowanych danych gry i można go nadpisać ustawieniem w nawiasie. Niejednoznaczne przypadki kończą się błędem z nazwą ustawienia do dodania; odrzucona postać nigdy nie jest rejestrowana częściowo. Źródło nie będące awatarem gracza otrzymuje ciało gracza z szablonu i tylko własny model, części, nazwę, dialog i skalę. Szablon to `Template`, dwunożny `BaseCharacter`, awatar o najbardziej zgodnych animacjach albo `AV_Buzz`. Typ aktora spoza `PlayerControllable` (np. nieistniejący `AV_Ferb`) zostaje zastąpiony typem szablonu. Profile narzędzi są przypisane do `ActorTypeMask`; brakujący lub NPC-owy profil zastępuje podstawowy ekwipunek szablonu bez jego osobistego Item i Ability. Puste sloty startowe wypełnia własne narzędzie źródła albo standardowy atak szablonu; nieistniejące narzędzia (np. `ITEM_FERB`) są usuwane. Broń NPC otrzymuje sterowanie `ITEM_BLASTER`. Wartości `ItemProjectile...` klonują broń razem z wykrytym DNA, skryptem i efektami. Brak wiersza aktora oznacza klon wiersza szablonu z podmienionym modelem. Model gracza to prywatny BENT z siatką źródła i zestawami animacji szablonu, serwowany z własnych archiwów gracza; oryginalne zasoby, wiersze i profile pozostają niezmienione. Wspólne animacje nie są retargetowaniem.
+
+### Examples / Przykłady
+
+**A. A cut playable without a tool profile: Ferb.** The shipped `characters/PNF_Ferb.dnax` is a complete player DNA, but the game has no `AV_Ferb` tool profile, no `ITEM_FERB`/`PROP_FERB` tools, no actor or dependency row, no `AV_Ferb` actor type and no animated entity for `characters/PNF_Ferb/PNF_Ferb` (only the mesh). The loader handles all of these; Phineas is the natural template for his rig:
+
+```ini
+[Character]
+Name=LiteralCrab_Ferb
+Source=characters/PNF_Ferb.dnax
+Template=PNF_Phineas
+DisplayName=Ferb
+Icon=ui/icons/hud_playericons_ferb
+```
+
+**B. An NPC with an NPC profile: Butch.** `butch` is a Cowboy-AI enemy: BipedNPC animation tree, no avatar gadgets, an `LR_Butch` profile holding enemy weapons, an entity with only enemy and riding animation sets, and dependency rows only in the Lone Ranger play set. The quick-start manifest above is enough; the Lone Ranger template is found automatically.
+
+**C. An existing native tool.** Any tool ID can be a starting slot. It joins the private inventory, and an NPC weapon gets player controls:
+
+```ini
+[Character.Gameplay]
+Item=ITEM_PISTOL
+```
+
+```ini
+[Character.Gameplay]
+Item=ITEM_ZURG_BOSS_BLASTER
+ItemProjectileRadius=0.15
+ItemProjectileScale=0.1
+```
+
+**D. A standalone weapon from a native template.** See [Standalone custom tools](#standalone-custom-tools--osobne-customowe-narzędzia):
+
+```ini
+[Tool]
+Id=LCR_BUTCH_BLASTER
+Source=ITEM_ZURG_BOSS_BLASTER
+Characters=LiteralCrab_Butch
+Equip=1
+ProjectileRadius=0.15
+ProjectileScale=0.1
+ProjectileSpeed=45
+```
+
+**E. Properties in plain Lua.** `DNA=` names a data-only Lua table merged into the private DNA after the loader's own changes. `Remove` lists dotted paths to delete. Ferb's DNA borrows Perry's explosion pieces; removing them selects the zero-piece death and respawn path:
+
+```ini
+[Character]
+Name=LiteralCrab_Ferb
+Source=characters/PNF_Ferb.dnax
+Template=PNF_Phineas
+DNA=ferb.lua
+```
+
+```lua
+-- ferb.lua: plain readable Lua, validated at startup.
+DNA = {
+    AgentGadgets = {
+        Health = { health = 600 },
+        TargetMode = { TargetingNormalOffset = { -0.9, 2.0, 0 } },
+    },
+}
+Remove = { "AgentGadgets.DynamicExploder.dynexp_pieceFile" }
+```
+
+Tables merge by key; a list (such as an offset) and any plain value replace the native value. The file may only assign `DNA` and `Remove`, using literals and table constructors. Calls, expressions and other globals are rejected at startup with the line's reason. For logic, `DNAScript=` names an ordinary Lua script that runs on the private DNA after the overlay, with the same arguments and library functions as a [patch](#patches).
+
+PL: A — Ferb ma pełne DNA gracza, ale w grze brakuje profilu `AV_Ferb`, narzędzi `ITEM_FERB`/`PROP_FERB`, wiersza aktora i zależności, typu `AV_Ferb` oraz animowanej encji (jest sama siatka). Loader uzupełnia wszystkie braki; szablonem jest Phineas. B — Butch to przeciwnik z AI Cowboy, drzewem BipedNPC, profilem z bronią wrogów i encją bez zestawów animacji gracza; wystarczy manifest z szybkiego startu. C — każde natywne narzędzie może być wyposażeniem startowym; trafia do prywatnego ekwipunku, a broń NPC dostaje sterowanie gracza. D — osobna broń z natywnego szablonu. E — `DNA=` wskazuje czytelną tabelę Lua (tylko dane), scalaną z prywatnym DNA; `Remove` usuwa ścieżki. Tabele scalają się po kluczach, listy i wartości zastępują oryginał. `DNAScript=` uruchamia zwykły skrypt Lua na prywatnym DNA, jak patch.
+
+### Before and after / Przed i po
+
+The accepted Zurg character previously needed this manifest; every native record had to be named by hand:
+
+```ini
+[Character]
 SkuId=1000900
 Name=LiteralCrab_Zurg
 Gateway=LCR_Zurg
@@ -127,26 +223,65 @@ PreloadIncludes=biped_avatar
 PreloadFiles=Entity|weapons/laser_blast,Cho|choreographies/ts_zurgloaded/ts_zurgloaded,Cho|choreographies/ts_zurgball/ts_zurgball,Cho|choreographies/ts_zurgbalimpact/ts_zurgbalimpact,Audio|ToyStoryInSpace
 ```
 
-Choose a unique `SkuId` in `1000100..1999999`, `Name` and `Gateway`; do not enable two examples with the same identity. At most 64 extra figures are supported. `Actor` and `Gateway` must match ignoring case and start with `LCR_` for private gameplay. `SourceActor` must be a different existing avatar; `SourceDNA` must match that source actor's native record and have compatible `ToolSetManager` and identification data. `BaseCharacter` supplies presentation defaults, not that character's complete behavior or powers. Technical names are ASCII identifiers; display text currently accepts printable ASCII. Rejected definitions and private-name conflicts are logged and keep the affected figure inactive.
+The same result now comes from:
 
-PL: Wybierz unikalne `SkuId` z zakresu `1000100..1999999`, `Name` i `Gateway`; nie włączaj dwóch przykładów o tej samej tożsamości. Limit to 64 dodatkowe figurki. W prywatnej rozgrywce `Actor` i `Gateway` są zgodne bez rozróżniania wielkości liter i zaczynają się od `LCR_`. `SourceActor` wskazuje innego istniejącego awatara, a `SourceDNA` odpowiada jego natywnemu rekordowi i zawiera zgodne dane `ToolSetManager` oraz identyfikacji. `BaseCharacter` dostarcza domyślne pola prezentacji. Nazwy techniczne są identyfikatorami ASCII; tekst wyświetlany obsługuje obecnie drukowalne ASCII. Błędne definicje i konflikty są logowane, a dana figurka pozostaje nieaktywna.
+```ini
+[Character]
+SkuId=1000900
+Name=LiteralCrab_Zurg
+Source=av_zurg
+Template=AV_Buzz
+DisplayName=Zurg
+Icon=ui/icons/npc_mg_zurg
 
-### Attacks, tools and projectiles / Ataki, narzędzia i pociski
+[Character.Gameplay]
+Item=ITEM_ZURG_BOSS_BLASTER
+ItemProjectileRadius=0.15
+ItemProjectileScale=0.1
+ItemProjectileSpeed=45
+ItemProjectileLifetime=2
+ItemProjectileDamage=10
+AimOffset=-0.95,2.1,-0.8
+PreloadFiles=Cho|choreographies/ts_zurgloaded/ts_zurgloaded,Audio|ToyStoryInSpace
+```
+
+The loader derives the same inventory, standard attack, blaster controls, gun clone, tool actor, `biped_avatar` include, projectile model and choreographies, and also completes Zurg's entity with Buzz's Toy Box animation set. The remaining preloads are the boss script's charge effect and the Toy Story sound bank; their names are not derivable from the gun's data. When this replaces an existing character, also keep its `SkuId` and `Gateway` (here `Gateway=LCR_Zurg`) so the portal identity stays the same. The old manifest still works unchanged, and an `AssetDirectory` model still takes precedence. `ItemDisplayName` is optional.
+
+PL: Wcześniej Zurg wymagał ręcznego wskazania każdego rekordu natywnego. Teraz ten sam wynik daje krótki manifest: loader sam wyznacza ekwipunek, standardowy atak, sterowanie, klon broni, aktora narzędzia, include `biped_avatar`, model pocisku i choreografie, a encję Zurga uzupełnia zestawem animacji Toy Boksa od Buzza. Pozostałe dwa preloady (efekt ładowania ze skryptu bossa i bank dźwięków Toy Story) nie wynikają z danych broni. Zachowaj `SkuId` przy zastępowaniu istniejącej postaci. Stary manifest nadal działa bez zmian.
+
+### [Character] settings / Ustawienia
+
+| Setting | Meaning / Znaczenie |
+| --- | --- |
+| `Name` | Required unique identifier (1–127 ASCII letters, digits, `_`); also names the portal portrait. / Wymagany unikalny identyfikator. |
+| `Source` | Native actor row name, or a relative `.dnax` path. Enables gameplay. / Natywny aktor albo ścieżka `.dnax`; włącza rozgrywkę. |
+| `Template` | Stock playable biped for the body, animations and basic inventory: `AV_Buzz`, `AV_Woody`, `AV_Jessie`, `LR_LoneRanger`, `LR_Tonto`, `PIR_JackSparrow`, `PIR_Barbossa`, `PIR_DavyJones`, `AV_MrIncredible`, `AV_ElastiGirl`, `AV_Dash`, `AV_Violet`, `AV_Syndrome`, `MU_Sully`, `MU_Mike`, `MU_Randall`, `TB_MickeyMouse`, `NBC_JackSkellington`, `TAN_Rapunzel`, `FRO_Anna`, `FRO_Elsa`, `WR_Ralph`, `WR_Vanellope`, `PNF_Perry`, `PNF_Phineas`. / Szablon ciała, animacji i ekwipunku. |
+| `Body` | `auto` (default), `source` or `template`. / Źródło ciała gracza. |
+| `Animations` | `auto` (default), `source`, `complete` or `template`. / Źródło zestawów animacji. |
+| `DNA`, `DNAScript` | Mod-relative Lua overlay (data only, up to 1 MiB) and script (up to 4 MiB) for the private DNA. / Nakładka i skrypt Lua dla prywatnego DNA. |
+| `DisplayName`, `Description` | Printable ASCII text. / Tekst w drukowalnym ASCII. |
+| `Icon` | Native `ui/...` single-texture bundle; default `ui/charactericons/blankavatar`. / Natywna ikona. |
+| `SkuId` | `1000100..1999999`; default derived from `Name`. Set it to keep the identity when renaming, or when the derived value collides. / Domyślnie wyliczane z `Name`. |
+| `Gateway`, `Actor` | Private names, equal ignoring case and starting with `LCR_`; default `LCR_<Name>`. / Prywatne nazwy `LCR_`. |
+| `BaseCharacter` | Stock figure for portal presentation defaults; default is the template (`AV_Buzz` without gameplay). / Domyślne pola prezentacji. |
+| `Playset`, `AssetDirectory` | As before; see private resources below. / Jak wcześniej. |
+
+Unknown `[Character]` keys are logged and ignored. At most 64 extra figures are supported; do not enable two mods with the same `SkuId`, `Name` or `Gateway`.
+
+PL: Nieznane klucze `[Character]` są logowane i pomijane. Limit to 64 dodatkowe figurki; nie włączaj dwóch modów o tym samym `SkuId`, `Name` lub `Gateway`.
+
+### [Character.Gameplay] (optional) / Opcjonalna sekcja rozgrywki
+
+Every key is optional and only overrides an automatic choice. `SourceActor`/`SourceDNA` are the older spelling of `Source`; use one or the other.
 
 | Setting | Authoring purpose / Zastosowanie |
 | --- | --- |
-| `InventorySource`, `InventoryExclude` | Merge a native avatar's Items/Props/Abilities, deduplicate and exclude named tools. / Dodaj natywny profil i pomiń wskazane narzędzia. |
-| `Item`, `Prop`, `Ability` | Choose native starting equipment in the corresponding group; at least one is required. / Wybierz wyposażenie początkowe w odpowiedniej grupie; wymagane jest co najmniej jedno pole. |
-| `ItemControlSource`, `PropControlSource` | Borrow player control, targeting and HUD hints from another tool in the same group. / Pobierz sterowanie, celowanie i podpowiedzi innego narzędzia z tej samej grupy. |
-| `ItemDisplayName`, `PropDisplayName`, `AbilityDisplayName` | Set printable ASCII labels for the declared tool IDs. These localization keys are shared; first enabled mod wins a naming conflict. / Ustaw nazwy; przy wspólnym ID wygrywa pierwszy mod. |
-| `ItemWeaponSource`, `ItemToolDNA`, `ItemToolScript` | Clone one native gun, its projectile and tool actor/script privately. / Utwórz prywatną kopię natywnej broni, pocisku i aktora/skryptu narzędzia. |
-| `PreloadActors`, `PreloadIncludes`, `PreloadFiles` | Add dependencies to the private character record. / Dodaj zależności prywatnej postaci. |
-
-`PROP_BUZZ` supplies Buzz's body-only shoulder charge and ground pound. `ABILITY_BUZZ` is his jetpack; it is not the standard attack. The example excludes Buzz's innate laser and jetpack, keeps Zurg's blaster and adds normal equipment groups. Native unlock, suppression and world restrictions still apply. Compatible motions, effects and rig sockets are required. Playing an attack animation through Lua does not create a projectile, hit detection or damage.
-
-PL: `PROP_BUZZ` daje szarżę barkiem i ground pound, a `ABILITY_BUZZ` oznacza jetpack. Przykład pomija laser i jetpack Buzza, zachowuje blaster Zurga i dodaje zwykły ekwipunek. Natywne odblokowania, blokady oraz reguły świata nadal obowiązują. Potrzebne są zgodne animacje, efekty i mocowania rigu. Samo odtworzenie animacji przez Lua nie tworzy pocisku ani obrażeń.
-
-The weapon clone currently supports the item slot and a source item with exactly one actor descriptor. It keeps the source weapon/projectile definitions unchanged. The optional numerical overrides are separate:
+| `InventorySource`, `InventoryExclude` | Merge a native profile (by `ActorTypeMask`, for example `AV_Buzz`) and exclude named tools. / Dodaj profil i pomiń narzędzia. |
+| `Item`, `Prop`, `Ability` | Starting equipment in the corresponding group. / Wyposażenie początkowe. |
+| `ItemControlSource`, `PropControlSource` | Player control, targeting and HUD hints from another tool of the same group. / Sterowanie innego narzędzia. |
+| `ItemDisplayName`, `PropDisplayName`, `AbilityDisplayName` | Printable ASCII labels; these localization keys are shared, and the first enabled mod wins. / Etykiety narzędzi. |
+| `ItemWeaponSource`, `ItemToolDNA`, `ItemToolScript` | Explicit gun, tool DNA and native script for the private weapon clone. / Jawne źródła klonu broni. |
+| `PreloadActors`, `PreloadIncludes`, `PreloadFiles` | Extra dependencies of the private character. / Dodatkowe zależności. |
 
 | Setting | Range | Effect / Działanie |
 | --- | --- | --- |
@@ -157,9 +292,21 @@ The weapon clone currently supports the item slot and a source item with exactly
 | `ItemProjectileDamage` | `0..10000` | Damage / obrażenia |
 | `AimOffset=x,y,z` | Each component `-10..10` | Targeting-camera offset / przesunięcie kamery celowania |
 
-Omitted values inherit the source. `0.075` is a smaller visual projectile than the accepted Zurg value `0.1`; `0.25` is larger. Changing visual scale does not change collision radius. `PreloadFiles` entries are comma-separated `type|path`, with types `DNA`, `Script`, `Entity`, `Cho`, `Audio`, `AnimTreeProject` or `BehaviorMap`. `PreloadIncludes` names native Include entries without `|Include`. Each dependency list accepts up to 64 distinct entries.
+Omitted values inherit the source. A boss gun's own values are tuned for NPCs (Zurg's has radius 5, which explodes under the avatar), so set radius and scale when giving one to a player. Changing visual scale does not change collision radius. `PreloadFiles` entries are comma-separated `type|path`, with types `DNA`, `Script`, `Entity`, `Cho`, `Audio`, `AnimTreeProject` or `BehaviorMap`. `PreloadIncludes` names native Include entries without `|Include`. Each list accepts up to 64 distinct entries. `PROP_BUZZ` and the other avatars' `PROP_...` rows without a tool actor are body-only standard attacks (shoulder charge, ground pound); `ABILITY_BUZZ` is Buzz's jetpack. Native unlock, suppression and world rules still apply. Playing an attack animation through Lua does not create a projectile, hit detection or damage.
 
-PL: Klonowanie broni obsługuje obecnie slot `Item` i źródłowe narzędzie z jednym deskryptorem aktora. Pominięte parametry są dziedziczone. Skala `0.075` jest mniejsza od przyjętego `0.1`, a `0.25` większa. Skala wyglądu i kolizja są niezależne. `PreloadFiles` ma format `typ|ścieżka`; dostępne typy podano wyżej. `PreloadIncludes` wskazuje nazwy Include bez sufiksu `|Include`. Każda lista zależności dopuszcza do 64 różnych wpisów.
+PL: Wszystkie klucze są opcjonalne i jedynie nadpisują wybór automatyczny. Pominięte wartości dziedziczy źródło. Broń bossa ma wartości dla NPC (promień 5 Zurga wybucha pod awatarem), więc ustaw promień i skalę. `PreloadFiles` ma format `typ|ścieżka`, `PreloadIncludes` nazwy Include bez `|Include`, a każda lista do 64 wpisów. `PROP_...` bez aktora narzędzia to standardowy atak ciała; `ABILITY_BUZZ` to jetpack. Natywne odblokowania i reguły świata nadal obowiązują.
+
+### Lua and DNAX / Lua a DNAX
+
+`.dnax` files are not a separate format. Each is a Lua 5.1 chunk that only builds a table and assigns it to the global `DNA`; the game normally ships them precompiled. The engine runs the chunk in a data state without the standard library and converts the resulting table into native components. Behavior trees (`.btx`) and behavior maps (`.bmx`) work the same way. Every shipped DNA, behavior and data-map chunk uses only table-building instructions, which is why LiteralCrab can read them exactly at startup and refuses anything else instead of approximating it.
+
+So a text `.dnax` with a plain Lua table already loads, and LiteralCrab's `DNA=` overlay is ordinary readable Lua that the game converts into the same native structures. What cannot be ordinary Lua:
+
+- `.sx` files are SLNG, the engine's own compiled behavior bytecode for tools, AI and gameplay actions. They are not Lua, and no SLNG compiler is available. Custom behavior therefore reuses native scripts (the private clones keep their instructions and only rename resource strings) or game Lua reached through [patches](#patches) and the [engine adapters](#engine-adapters-literalcrab).
+- Models, rigs, animation clips, materials and textures are native binary resources.
+- A DNA table must still describe components the engine knows. A data-only overlay cannot add new component types, and the loader does not validate component field names against the engine; misspelled fields are ignored by the game.
+
+PL: Pliki `.dnax` to fragmenty Lua 5.1, które tylko budują tabelę `DNA`; zwykle są prekompilowane. Silnik wykonuje je bez biblioteki standardowej i zamienia tabelę na komponenty natywne. Tak samo działają `.btx` i `.bmx`. Tekstowe `.dnax` z tabelą Lua już działa, a nakładka `DNA=` to zwykły Lua przekształcany przez grę w te same struktury. Zwykłym Lua nie mogą być: skrypty `.sx` (SLNG, natywny bytecode zachowań, nie Lua), modele, rigi, animacje, materiały i tekstury. Nakładka nie dodaje nowych typów komponentów, a błędne nazwy pól gra pomija.
 
 ### Private resources and portraits / Prywatne zasoby i portrety
 
@@ -169,27 +316,92 @@ The directory must be nonempty, with at most 4096 loose files and 512 MiB. Trave
 
 `Icon` names a native `ui/...` single-texture MTB bundle, with its DDS texture in a `.tbody` resource. A PNG alone is not a game icon: author the native bundle/texture first. A private icon belongs under the same `AssetDirectory`, for example `ui/icons/my_zurg.mtb` and `textures/<hash>.tbody`, with `Icon=ui/icons/my_zurg`. The loader fits alpha bounds and proportions to the portal's normal/selected 512×512 and small 256×256 portraits. See the [character reference](README.md) for supported DDS formats and explicit portrait overrides.
 
-PL: `AssetDirectory` służy zasobom jednej postaci. To względny folder moda poza globalnym `assets`. Zachowaj logiczne ścieżki plików i używaj ich w manifeście. Loader tworzy prywatne ścieżki SKU i hashe tekstur; brakujące zasoby nadal korzystają z gry lub pozostałych modów. Zwykłe `assets/...` zastępuje zasoby globalnie. Folder musi być niepusty; limit to 4096 luźnych plików i 512 MiB. ZIP-y nie są rozpakowywane. Modele, rig i animacje wymagają zgodnych formatów PC oraz zachowanych zależności względnych. Loader nie konwertuje zasobów konsolowych i nie przepisuje wszystkich odwołań wewnętrznych binarnych plików.
-
-PL: `Icon` wskazuje natywny pakiet MTB i jego teksturę DDS w `.tbody`; sam PNG nie wystarczy. Własną ikonę umieść np. jako `ui/icons/my_zurg.mtb` oraz `textures/<hash>.tbody` wewnątrz `AssetDirectory`, a w manifeście ustaw `Icon=ui/icons/my_zurg`. Loader zachowuje proporcje i marginesy portalu; pełny opis formatów i nadpisywania wariantów zawiera [dokumentacja postaci](README.md).
+PL: `AssetDirectory` służy zasobom jednej postaci. To względny folder moda poza globalnym `assets`. Zachowaj logiczne ścieżki plików i używaj ich w manifeście. Loader tworzy prywatne ścieżki SKU i hashe tekstur; brakujące zasoby nadal korzystają z gry lub pozostałych modów. Zwykłe `assets/...` zastępuje zasoby globalnie. Folder musi być niepusty; limit to 4096 luźnych plików i 512 MiB. ZIP-y nie są rozpakowywane. Modele, rig i animacje wymagają zgodnych formatów PC oraz zachowanych zależności względnych. `Icon` wskazuje natywny pakiet MTB i jego teksturę DDS w `.tbody`; sam PNG nie wystarczy.
 
 ### Respawn and attachment fit / Odradzanie i dopasowanie mocowań
 
 Private gameplay DNA defaults a missing `DynamicExploder.dynexp_reassemble` to numeric `1` when that gadget exists. Explicit author values are preserved. For zero-piece private avatars using the recognized native Avatar tree, the loader also supplies a private tree with an earlier `PrepareForDeath` transition so the reassembly event is received. No extra manifest respawn key is needed. Combat respawn, weapon return and shorter recovery are confirmed for the Zurg example; fall/water rules are separate.
 
-Matching socket names do not guarantee matching directions. Zurg's right-foot-center socket inherits its left foot, unlike Buzz's right-foot parent. The accepted local Zurg model adds a `+40` degree yaw to its existing group through OCT `DataNode333.Data.Orientation`; this is a model correction, not a general manifest option. Do not apply that node number or angle to another rig without checking its topology. Read local rotations with `GetAvatarSocketOrientation` and compare the socket's parent frames in the same pose. The query neither edits the rig nor composes a world-space rotation.
+Matching socket names do not guarantee matching directions. Zurg's right-foot-center socket inherits its left foot, unlike Buzz's right-foot parent. The accepted local Zurg model adds a `+40` degree yaw to its existing group through OCT `DataNode333.Data.Orientation`; this is a model correction, not a general manifest option. Do not apply that node number or angle to another rig without checking its topology. Read local rotations with `GetAvatarSocketOrientation` and compare the socket's parent frames in the same pose.
 
-PL: Gdy istnieje `DynamicExploder`, prywatne DNA domyślnie otrzymuje brakujące `dynexp_reassemble=1`; jawne wartości autora pozostają zachowane. Dla postaci bez rozbitych części, używającej rozpoznanego natywnego drzewa awatara, loader przygotowuje prywatne drzewo z wcześniejszym przejściem `PrepareForDeath`. Dodatkowy klucz respawnu w manifeście nie jest potrzebny. Na Zurgu potwierdzono powrót postaci, broni i krótsze odradzanie po walce; woda i upadek to osobne reguły.
-
-PL: Nazwy mocowań nie gwarantują zgodnego kierunku. Przyjęty model Zurga koryguje grupę prawej stopy o `+40` stopni przez OCT `DataNode333.Data.Orientation`; to poprawka konkretnego modelu, nie opcja manifestu dla wszystkich postaci. Nie przenoś numeru węzła ani kąta na inny rig bez sprawdzenia struktury. `GetAvatarSocketOrientation` odczytuje obrót lokalny; porównuj również rodziców w tej samej pozie. Funkcja nie zmienia rigu i nie oblicza obrotu w świecie.
+PL: Gdy istnieje `DynamicExploder`, prywatne DNA domyślnie otrzymuje brakujące `dynexp_reassemble=1`; jawne wartości autora pozostają zachowane. Dla postaci bez rozbitych części loader przygotowuje prywatne drzewo z wcześniejszym `PrepareForDeath`. Nazwy mocowań nie gwarantują zgodnego kierunku; korekta deski Zurga dotyczy tylko jego modelu.
 
 ### Testing and current coverage / Testowanie i obecny zakres
 
-After a restart, check the new portal row and actual spawn, then the normal attack and damage, aiming and a distant projectile hit, tool/backpack switching, combat death and recovery, and attachments while moving. Test each intended playset and a source boss encounter separately. Portal membership alone does not supply missing playset dependencies or authorize every tool. This API does not yet provide a complete arbitrary ability/skill-tree editor or guarantee independent XP/save progression.
+After a restart, check the new portal row and actual spawn, then movement and animation, the normal attack and damage, aiming and a distant projectile hit, tool/backpack switching, combat death and recovery, and attachments while moving. Test each intended playset separately. Portal membership alone does not prove a character is playable. Check `LiteralCrab.log` for `Custom figure`, `Custom gameplay`, `Custom assets` and `Custom tool` lines and for applied private patches. Enable tracing only while diagnosing.
 
-Check `LiteralCrab.log` for `Custom figure`, `Custom assets`, rejected definitions and applied private gameplay patches. Enable tracing only while diagnosing and turn it off afterward. A missing portal row can result from an ID/name conflict, unavailable icon or invalid resource directory. A visible gun without aiming/fire needs player control/targeting data; an oversized or self-colliding projectile needs separate visual/collision tuning. See the [character reference](README.md) for the full contracts and tested limits.
+Status: the Zurg character and TS3 blaster are confirmed in game with explicit manifests. With the minimal manifests above, Butch and Ferb have been spawned in a Toy Box from the virtual base: both render their own models, walk and jump with the template's animation sets, and Butch aims the `Source`-only blaster. Damage, the standard attack, death and recovery, tool switching and other play sets are not yet confirmed for them. The private actor row is cloned into the actor lists that contain the source or template row (for stock avatars, the Toy Box list). This API does not provide an ability/skill-tree editor or guarantee independent XP/save progression.
 
-PL: Po restarcie sprawdź osobny wpis i spawn, atak oraz obrażenia, celowanie i trafienie oddalonego celu, zmianę broni/plecaka, śmierć i powrót oraz mocowania podczas ruchu. Każdy docelowy playset i walkę ze źródłowym bossem testuj oddzielnie. Sam portal nie zapewnia zależności playsetu ani wszystkich uprawnień wyposażenia. API nie daje jeszcze pełnego edytora dowolnych zdolności/drzewka ani gwarancji osobnego XP i zapisu. W `LiteralCrab.log` szukaj wpisów `Custom figure`, `Custom assets`, odrzuceń i zastosowanych poprawek prywatnych. Trace włączaj tylko na czas diagnozy.
+PL: Po restarcie sprawdź wpis w portalu i spawn, ruch i animacje, atak i obrażenia, celowanie, zmianę narzędzi, śmierć i powrót oraz mocowania. Każdy playset testuj osobno; sam portal nie dowodzi grywalności. W logu szukaj wpisów `Custom figure`, `Custom gameplay`, `Custom assets`, `Custom tool`. Stan: Zurg i blaster TS3 są potwierdzone w grze z jawnymi manifestami. Butch i Ferb z minimalnych manifestów pojawili się w Toy Boksie: mają własne modele, chodzą i skaczą z animacjami szablonu, a Butch celuje blasterem z `Source`. Obrażeń, ataku, śmierci, zmiany narzędzi i innych playsetów jeszcze nie potwierdzono.
+
+## Standalone custom tools / Osobne customowe narzędzia
+
+`[Tool]` registers a new native tool ID, independently of `[Character]`, and grants it to custom characters. The simplest tool names its ID, a native tool to copy and the characters:
+
+```ini
+[Mod]
+Name=Butch blaster
+Enabled=1
+
+[Tool]
+Id=LCR_BUTCH_BLASTER
+Source=ITEM_ZURG_BOSS_BLASTER
+Characters=LiteralCrab_Butch
+Equip=1
+ProjectileRadius=0.15
+ProjectileScale=0.1
+```
+
+From `Source` the loader takes the tool actor (the row's single actor descriptor), its DNA from the actor list, and, when projectile values are set, its native script and the unique gun that script names. A player tool is its own `BaseTool`. An NPC-only item has no player control contexts, so `ITEM_BLASTER` supplies the controls, attachment, selection and upgrade rules (`BaseTool`). Shipped projectile models and effect choreographies are preloaded; other dependencies (a boss script's own effects, sound banks) go in `PreloadFiles`. One mod declares one tool; up to 64 custom tools can be enabled. A tool can serve many characters through `Characters=A,B` or `Characters=*`. Original actor/tool rows and every native inventory profile keep their bytes.
+
+PL: `[Tool]` rejestruje nowe ID narzędzia i nadaje je customowym postaciom. Najprostsze narzędzie podaje ID, natywne narzędzie do skopiowania i postacie. Z `Source` loader bierze aktora narzędzia, jego DNA, a przy ustawieniach pocisku także skrypt i jedyną broń, którą skrypt wskazuje. Narzędzie gracza jest własną bazą; broń NPC dostaje bazę `ITEM_BLASTER`. Modele pocisków i choreografie z gry są wczytywane automatycznie; inne zależności dodaj w `PreloadFiles`. Jeden mod to jedno narzędzie, limit 64; `Characters` może wskazać wiele postaci lub `*`.
+
+A tool with its own model and icon, as in the local TS3 Zurg gun conversion:
+
+```ini
+[Tool]
+Id=LCR_TS3_ZURG_BLASTER
+Source=ITEM_ZURG_BOSS_BLASTER
+Characters=LiteralCrab_Zurg
+Equip=1
+DisplayName=TS3 Zurg Blaster
+AssetDirectory=tool-assets
+Model=characters/ts3_zurggun/ts3_zurggun
+ModelHandle=ControlHandle
+Icon=ui/icons/lcr_ts3_zurg_blaster
+ProjectileRadius=0.15
+ProjectileScale=0.1
+ProjectileSpeed=45
+ProjectileLifetime=2
+ProjectileDamage=10
+PreloadFiles=Cho|choreographies/ts_zurgloaded/ts_zurgloaded,Audio|ToyStoryInSpace
+```
+
+The model/icon paths require a compatible native bundle in the mod; the manifest does not convert a source game's resources. The local TS3 gun conversion preserves its source shape, topology, UVs and diffuse textures, with a uniform transform into the previous DI1 player gun's grip frame. Loading, aiming, firing and grip have been checked locally with the explicit form of this manifest (`BaseTool=ITEM_BLASTER`, `SourceActor`, `SourceDNA`, `SourceScript`, `WeaponSource`), which still works. The barrel animation is not connected, and the hose/backpack are omitted.
+
+| Field | Contract / Znaczenie |
+| --- | --- |
+| `Id` | Required unique `LCR_` identifier, 5–64 ASCII bytes. / Unikalny identyfikator `LCR_`. |
+| `Source` | Native tool to copy; needs exactly one actor descriptor. / Natywne narzędzie do skopiowania. |
+| `Characters` | Comma-separated custom figure `Name` values, or only `*`. / Nazwy customowych postaci lub `*`. |
+| `BaseTool` | Optional player tool whose controls, attachment, selection, world and upgrade rules the new row inherits; default `Source`, or `ITEM_BLASTER` for an NPC-only item. Without `Source`, the base tool is also copied. / Baza reguł narzędzia. |
+| `ControlSource` | Optional same-group targeting, control-context and HUD donor. / Sterowanie innej pozycji z tej samej grupy. |
+| `Equip` | `0` by default; `1` makes this the starting tool in its group, in memory. A second tool cannot claim the same slot. / Wyposażenie początkowe. |
+| `SourceActor`, `SourceDNA`, `SourceScript`, `WeaponSource` | Explicit tool actor, its DNA, native PC SLNG script and gun; inferred from `Source` when omitted. / Jawne źródła; domyślnie z `Source`. |
+| `Model`, `ModelHandle` | Optional extensionless Entity path replacing the DNA's model, and the attachment control it exports. / Model i uchwyt. |
+| `Icon` | Optional native `ui/...` MTB/TEXB icon; default the base tool's icon. / Ikona. |
+| `AssetDirectory` | Optional private resource folder, with the same limits as character assets. / Prywatne zasoby. |
+| `DisplayName`, `Description` | Printable ASCII localization text. / Nazwa i opis. |
+| `DNA`, `DNAScript` | Lua overlay and script for the private tool DNA, as for characters. / Nakładka i skrypt Lua. |
+| `PreloadActors`, `PreloadIncludes`, `PreloadFiles` | Additional private tool dependencies. / Dodatkowe zależności. |
+
+`ProjectileRadius`, `ProjectileScale`, `ProjectileSpeed`, `ProjectileLifetime` and `ProjectileDamage` use the ranges of their `ItemProjectile...` equivalents and apply to Items. Omitted values inherit the source gun. The base tool's native upgrade prerequisite still applies; this API does not award unrelated progression.
+
+Private resources mount under `characters/literalcrab/assets/tools/<lowercase Id>/...`, with separate texture hashes. Actor, script and weapon names also belong to the new ID. Only the targeted private inventories and their preload lists receive the new row. `Equip=1` temporarily replaces that figure's declared starting slot and any per-character weapon clone for that slot; the character manifest is unchanged. Disabling the tool mod through `user.ini` restores the prior character configuration on restart. A bad declaration or failed resource preparation publishes no partial tool; runtime private actor/dependency/weapon conflicts disable affected custom portal figures instead of replacing the conflicting records.
+
+Private MTB files use native BNDL v1 / TEXB v3. MATP v2 metadata is checked before mounting: string tables, repeated material count and shader indices must be in bounds. The loader preserves the shader identities and opaque parameter blocks; those shaders must already exist in the game. Material authors must use the native grouped arrays and distinct material cache keys. These checks do not validate shader-specific parameter lengths or convert foreign shaders.
+
+PL: Pola `Projectile...` mają zakresy odpowiednich `ItemProjectile...`. Natywny warunek odblokowania bazy nadal obowiązuje. Zasoby, tekstury, aktor, skrypt i pocisk mają prywatne nazwy. Nowy wpis trafia tylko do wskazanych prywatnych ekwipunków. `Equip=1` zmienia slot początkowy w pamięci; plik postaci pozostaje zachowany. Błędna deklaracja nie publikuje części narzędzia, a konflikty rekordów blokują powiązane figurki. Prywatne MTB wymagają BNDL v1 / TEXB v3; metadane MATP v2 są sprawdzane przed montowaniem, a shadery muszą istnieć w grze.
 
 ## Chunk names
 

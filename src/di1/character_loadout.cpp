@@ -40,7 +40,7 @@ const void* __fastcall privateProfile(void* self,void*,void* actor) {
         const auto* identity=text(properties+8,"LiteralCrabFigure",nullptr);
         for(const auto& definition:definitions) {
             const auto& f=definition.figure;
-            if(f.gameplay.inventorySource.empty() || !equal(identity,f.name)) continue;
+            if(f.gameplay.inventoryRows.empty() || !equal(identity,f.name)) continue;
             const auto& rows=f.gameplay.inventoryRows;
             const auto& hashes=f.gameplay.inventoryHashes;
             if(rows.size()<2 || rows.size()!=hashes.size()+1 || rows.back()!=~0u || hashes.size()>512) return fallback;
@@ -151,7 +151,7 @@ bool installCustomLoadouts(HMODULE host,const std::vector<CustomFigure>& figures
     nativeTable=*reinterpret_cast<const unsigned char* const* const*>(base+0xC1E2C5);
     if(!readable(type,sizeof(*type)) || !readable(nativeTable,sizeof(*nativeTable))) { definitions.clear();return false; }
     data=reinterpret_cast<Data>(base+0x283E50);text=reinterpret_cast<Text>(base+0x2CFA30);
-    const bool inventory=std::any_of(definitions.begin(),definitions.end(),[](const auto& d){return !d.figure.gameplay.inventorySource.empty();});
+    const bool inventory=std::any_of(definitions.begin(),definitions.end(),[](const auto& d){return !d.figure.gameplay.inventoryRows.empty();});
     if(inventory) {
         if(!codeMatches(base+0xB70690,"0F B7 05 ?? ?? ?? ?? 53 56 8B F1 8B 4C 24 0C") ||
            !callsTo(base,0xB706A5,0x283E50) || !codeMatches(base+0xB706BD,"39 7E 58") ||

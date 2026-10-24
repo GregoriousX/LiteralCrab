@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "di1/character_gameplay.hpp"
 #include "di1/character_assets.hpp"
+#include "di1/character_profile.hpp"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -30,39 +31,18 @@ void addGenerated(mods::AssetIndex& assets,const std::string& path,std::string b
     assets.members.push_back(std::move(member));
     std::sort(assets.members.begin(),assets.members.end(),[](const auto& a,const auto& b){return a.name<b.name;});
 }
-std::string originalAsset(mods::AssetIndex& assets, const std::wstring& root, const std::string& name) {
-    if (const auto* member = assets.member(lower(name))) {
-        std::string bytes;
-        if (!assets.read(*member, bytes)) throw std::runtime_error("cannot read mod asset " + name);
-        return bytes;
-    }
-    if (name == "var/toolset/toolset.bin") {
-        mods::zip::Archive archive(root + L"/startup5.zip");
-        const auto* entry = archive.find(name);
-        if (!entry) throw std::runtime_error("original tool table missing");
-        return archive.read(*entry);
-    }
-    auto slash = name.rfind('/');
-    while (slash != std::string::npos) {
-        const auto directory = name.substr(0, slash);
-        const auto leaf = directory.substr(directory.rfind('/') + 1);
-        const auto archiveName = directory + '/' + leaf + ".zip";
-        try {
-            mods::zip::Archive archive(root + L"/" + std::wstring(archiveName.begin(), archiveName.end()));
-            if (const auto* entry = archive.find(name.substr(slash + 1))) return archive.read(*entry);
-            if (const auto* entry = archive.find(name)) return archive.read(*entry);
-        } catch (const std::exception&) { /* Try the containing archive. */ }
-        if (!slash) break;
-        slash = name.rfind('/', slash - 1);
-    }
-    throw std::runtime_error("source DNA not found: " + name);
-}
 std::string definitions(const std::vector<CustomFigure>& figures) {
     std::string code = "local figures={\n";
     for (const auto& f : figures) if (f.gameplay.enabled()) {
+        const auto& g = f.gameplay;
+        // Resolved figures name the row they clone; hand-built ones use their source.
+        const auto& rowSource = g.rowSource.empty() ? g.sourceActor : g.rowSource;
+        const auto& rowDna = g.rowSourceDna.empty() ? g.sourceDna : g.rowSourceDna;
         code += "{sku=" + std::to_string(f.sku) + ",name=" + mods::luaQuote(f.name) + ",actor=" + mods::luaQuote(lower(f.actor)) +
-            ",source=" + mods::luaQuote(lower(f.gameplay.sourceActor)) + ",sourceDna=" + mods::luaQuote(lower(f.gameplay.sourceDna)) +
-            ",dna=" + mods::luaQuote(customGameplayDnaPath(f)) + ",kind='Avatar',actors={";
+            ",source=" + mods::luaQuote(lower(rowSource)) + ",sourceDna=" + mods::luaQuote(lower(rowDna)) +
+            ",strip=" + (g.stripModelDef ? "true" : "false") + ",replace={";
+        for (const auto& [from, to] : g.fileReplacements) code += "[" + mods::luaQuote(from) + "]=" + (to.empty() ? std::string("false") : mods::luaQuote(to)) + ",";
+        code += "},dna=" + mods::luaQuote(customGameplayDnaPath(f)) + ",kind='Avatar',actors={";
         for (const auto& actor : f.gameplay.preloadActors) code += mods::luaQuote(lower(actor)) + ",";
         const auto& w=f.gameplay.itemWeapon;
         if(w.enabled()) code+=mods::luaQuote(w.actor)+",";
@@ -78,7 +58,7 @@ std::string definitions(const std::vector<CustomFigure>& figures) {
             code+="{sku="+std::to_string(f.sku)+",name="+mods::luaQuote(f.name)+",actor="+mods::luaQuote(w.actor)+
             ",source="+mods::luaQuote(lower(w.sourceActor))+",sourceDna="+mods::luaQuote(lower(w.dna))+
             ",dna="+mods::luaQuote(w.privateDna)+",sourceScript="+mods::luaQuote(lower(w.script))+
-            ",script="+mods::luaQuote(w.privateScript)+",kind='Other',actors={},files={},includes={},aliases={";
+            ",script="+mods::luaQuote(w.privateScript)+",strip=false,replace={},kind='Other',actors={},files={},includes={},aliases={";
             for (const auto& [from,to] : f.assetAliases) code += "["+mods::luaQuote(from)+"]="+mods::luaQuote(to)+",";
             code+="}},\n";
         }
@@ -147,10 +127,19 @@ std::vector<std::uint32_t> inventoryRows(std::string_view bytes, const CustomFig
                 result.push_back(tool);
             }
         }
-        if (!found) throw std::runtime_error("native tool profile missing: " + name);
+        if (!found) throw std::runtime_error("native tool profile missing: " + name +
+            " (set Template or InventorySource to give this character a player inventory)");
         return result;
     };
-    auto inventory = profile(f.gameplay.sourceActor);
+    // Native profiles are keyed by the DNA's ActorTypeMask, not by actor row names.
+    const auto& profileName = f.gameplay.sourceMask.empty() ? f.gameplay.sourceActor : f.gameplay.sourceMask;
+    const auto hasProfile = [&](const std::string& name) {
+        for (std::uint32_t i = 0; i < profiles; ++i) if (lower(std::string(text(word(blocks[12], 8 + i * 8)))) == lower(name)) return true;
+        return false;
+    };
+    // A source without its own profile (cut playables, many NPCs) uses only the donor's.
+    auto inventory = !f.gameplay.inventorySource.empty() && (profileName.empty() || !hasProfile(profileName)) ?
+        std::vector<std::uint32_t>{} : profile(profileName);
     if (!f.gameplay.inventorySource.empty()) {
         auto donor = profile(f.gameplay.inventorySource);
         std::vector<std::uint32_t> merged;
@@ -168,6 +157,28 @@ std::vector<std::uint32_t> inventoryRows(std::string_view bytes, const CustomFig
             }
         if (merged.empty() || merged.size()>512) throw std::runtime_error("private inventory must contain 1..512 native tools");
         inventory = std::move(merged);
+    }
+    if(!f.gameplay.extraTools.empty()) {
+        std::vector<std::uint32_t> additions;
+        for(const auto& id:f.gameplay.extraTools) {
+            std::optional<std::uint32_t> found;
+            for(std::uint32_t i=0;i<tools;++i) if(text(word(blocks[11],8+i*76))==id) {
+                if(found) throw std::runtime_error("ambiguous custom inventory tool");found=i;
+            }
+            if(!found) throw std::runtime_error("custom inventory tool missing: "+id);
+            if(std::find(additions.begin(),additions.end(),*found)==additions.end()) additions.push_back(*found);
+        }
+        std::vector<std::uint32_t> merged;
+        for(const auto* group:{"Items","Props","Abilities"}) {
+            bool present{};
+            for(auto i:inventory) if(text(word(blocks[11],8+i*76+8))==group) {merged.push_back(i);present=true;}
+            for(auto i:additions) if(text(word(blocks[11],8+i*76+8))==group) {
+                if(!present) throw std::runtime_error("custom tool group missing from avatar inventory");
+                if(std::find(merged.begin(),merged.end(),i)==merged.end()) merged.push_back(i);
+            }
+        }
+        if(merged.empty()||merged.size()>512) throw std::runtime_error("private inventory exceeds native limits");
+        inventory=std::move(merged);
     }
     for (const auto& [requested, group] : std::array<std::pair<std::string, const char*>, 3>{
         {{f.gameplay.item, "Items"}, {f.gameplay.prop, "Props"}, {f.gameplay.ability, "Abilities"}}}) {
@@ -192,7 +203,7 @@ void validateCustomLoadout(std::string_view bytes, const CustomFigure& f) {
 void resolveCustomInventory(std::string_view bytes, CustomFigure& f) {
     const auto rows=inventoryRows(bytes,f);
     f.gameplay.inventoryRows.clear(); f.gameplay.inventoryHashes.clear();
-    if(f.gameplay.inventorySource.empty()) return;
+    if(f.gameplay.inventorySource.empty()&&f.gameplay.extraTools.empty()) return;
     std::size_t at{};
     for(unsigned i=0;i<11;++i) at+=word(bytes,at);
     for(const auto row:rows) f.gameplay.inventoryHashes.push_back(word(bytes,at+8+row*76+4));
@@ -202,14 +213,16 @@ void resolveCustomInventory(std::string_view bytes, CustomFigure& f) {
 void prepareCustomCharacterGameplay(mods::AssetIndex& assets, const std::wstring& root,
     std::vector<CustomFigure>& figures, std::vector<std::string>& messages) {
     std::string tools;
+    NativeCatalog catalog(assets, root);
     std::erase_if(figures, [&](CustomFigure& f) {
         if (!f.gameplay.enabled()) return false;
         try {
-            if (tools.empty()) tools = originalAsset(assets, root, "var/toolset/toolset.bin");
+            resolveCustomCharacter(catalog, assets, f, messages);
+            if (tools.empty()) tools = catalog.read("var/toolset/toolset.bin");
             validateCustomLoadout(tools, f);
             resolveCustomInventory(tools, f);
             resolveCustomControlSources(tools, f);
-            const auto sourceAsset = [&](const std::string& path) { return originalAsset(assets, root, customAssetPath(f,path)); };
+            const auto sourceAsset = [&](const std::string& path) { return catalog.read(customAssetPath(f,path)); };
             // The original tree stays shared by stock actors. Only a private
             // zero-piece avatar selects this copy in its DNA patch below.
             try {
@@ -233,7 +246,8 @@ void prepareCustomCharacterGameplay(mods::AssetIndex& assets, const std::wstring
             }
             const auto path = customGameplayDnaPath(f);
             if (assets.member(path)) throw std::runtime_error("private generated DNA path already supplied by a mod");
-            auto dna = identifyCustomDna(sourceAsset(f.gameplay.sourceDna), marker(f));
+            // The player body: the source DNA, or the template's for a non-player source.
+            auto dna = identifyCustomDna(sourceAsset(f.gameplay.bodyDna.empty() ? f.gameplay.sourceDna : f.gameplay.bodyDna), marker(f));
             mods::AssetMember member; member.name = path;
             member.generated = std::make_shared<const std::string>(std::move(dna));
             assets.members.push_back(std::move(member));
@@ -290,9 +304,13 @@ void resolveCustomControlSources(std::string_view bytes, CustomFigure& f) {
 
 std::string customGameplayDnaPatch(const CustomFigure& f) {
     if (!f.gameplay.enabled()) return {};
-    std::string code = "local _,_,log=...\nlocal expected=" + mods::luaQuote(lower(f.gameplay.sourceActor)) + "\nlocal loadout={";
+    const auto& g = f.gameplay;
+    // The private DNA must carry the identity resolved at startup (its own mask,
+    // or the template's for a converted NPC); hand-built figures use SourceActor.
+    std::string code = "local _,_,log=...\nlocal expected=" + mods::luaQuote(lower(g.expectedMask.empty() ? g.sourceActor : g.expectedMask)) +
+        "\nlocal exact=" + (g.exactLoadout ? "true" : "false") + "\nlocal loadout={";
     for (const auto& [key, value] : std::array<std::pair<const char*, std::string>, 3>{
-        {{"AutoStartTool1", f.gameplay.item}, {"AutoStartTool2", f.gameplay.prop}, {"AutoStartTool3", f.gameplay.ability}}})
+        {{"AutoStartTool1", g.item}, {"AutoStartTool2", g.prop}, {"AutoStartTool3", g.ability}}})
         if (!value.empty()) code += "[" + mods::luaQuote(key) + "]=" + mods::luaQuote(value) + ",";
     code += R"lua(}
 if type(DNA)~='table' or type(DNA.AgentGadgets)~='table' or
@@ -300,6 +318,11 @@ if type(DNA)~='table' or type(DNA.AgentGadgets)~='table' or
    string.lower(DNA.AgentGadgets.Identification.ActorTypeMask or '')~=expected or
    type(DNA.Components)~='table' or type(DNA.Components.ToolSetManager)~='table' then
     log('SKIPPED: custom loadout source DNA contract differs'); return
+end
+-- Resolved figures replace every start slot, so tools missing from this
+-- build (for example ITEM_FERB) never reach the native tool manager.
+if exact then
+    for _,key in ipairs({'AutoStartTool1','AutoStartTool2','AutoStartTool3'}) do DNA.Components.ToolSetManager[key]=nil end
 end
 for key,value in pairs(loadout) do DNA.Components.ToolSetManager[key]=value end
 -- The shared avatar death behavior waits for DynamicExploderReassembled.
@@ -311,6 +334,8 @@ if type(exploder)=='table' and exploder.dynexp_reassemble==nil then
     exploder.dynexp_reassemble=1
 end
 )lua";
+    // Source identity on a template body, or model fixes, before resource remapping.
+    code+=g.bodyPatch;
     if(!f.gameplay.respawnBehavior.empty()) {
         code+="local ai=DNA.AgentGadgets.AiTree\n";
         code+="if type(exploder)=='table' and exploder.dynexp_reassemble==1 and "
@@ -324,7 +349,8 @@ end
         code+="if type(DNA.AgentGadgets.TargetMode)=='table' then DNA.AgentGadgets.TargetMode.TargetingNormalOffset={"+
             std::to_string(v[0])+","+std::to_string(v[1])+","+std::to_string(v[2])+"} end\n";
     }
-    return code + customAssetDnaPatch(f) + "DNA.Components.ToolSetManager.LiteralCrabFigure=" + mods::luaQuote(f.name) + R"lua(
+    // The author's overlay runs last among the loader's own changes.
+    return code + customAssetDnaPatch(f) + g.overlayPatch + "DNA.Components.ToolSetManager.LiteralCrabFigure=" + mods::luaQuote(f.name) + R"lua(
 log('APPLIED: custom native loadout on private avatar DNA')
 )lua";
 }
@@ -394,6 +420,8 @@ for _,figure in ipairs(figures) do
             if string.lower(path)==figure.sourceDna then matches=matches+1; return 'DNAFile='..figure.dna end
             return 'DNAFile='..path
         end)
+        -- A borrowed template row's modelDef would select the template's model.
+        if figure.strip then parms=string.gsub(parms,'%s*modelDef=[^;]*;?','') end
         if matches==1 and not existing then
             local row={}; for key,value in pairs(source) do row[key]=value end
             row.Name,row.Parms=figure.actor,parms
@@ -435,11 +463,15 @@ for _,figure in ipairs(figures) do
         local found=false
         for key,value in pairs(source) do row[key]=value end
         for _,file in ipairs(source.Files) do
-            if string.lower(file)=='dna|'..figure.sourceDna then file='DNA|'..figure.dna; found=true end
+            local replaced=figure.replace[string.lower(file)]
+            if replaced~=nil then file=replaced end
+            if file and string.lower(file)=='dna|'..figure.sourceDna then file='DNA|'..figure.dna; found=true end
             if figure.sourceScript and string.lower(file)=='script|'..figure.sourceScript then file='Script|'..figure.script end
-            local kind,path=string.match(file,'^([^|]+|)(.*)$')
-            if kind and figure.aliases[string.lower(path)] then file=kind..figure.aliases[string.lower(path)] end
-            files[#files+1]=file
+            if file then
+                local kind,path=string.match(file,'^([^|]+|)(.*)$')
+                if kind and figure.aliases[string.lower(path)] then file=kind..figure.aliases[string.lower(path)] end
+                files[#files+1]=file
+            end
         end
         if found then
             if type(source.Includes)=='table' then for _,value in ipairs(source.Includes) do includes[#includes+1]=value end end
@@ -550,6 +582,9 @@ void addCustomGameplayPatches(mods::Index& index, const std::vector<CustomFigure
         // The engine reports the source identity embedded in compiled DNA instead of its
         // asset path. Content targets are only scanned for unnamed chunks.
         index.addBuiltinPatch({path, identity, content}, "custom_loadout_" + f.name, customGameplayDnaPatch(f), "{}");
+        // An author's DNAScript runs after the loader's changes, on the private copy only.
+        if (!f.gameplay.dnaScriptSource.empty())
+            index.addBuiltinPatch({path, identity, content}, "custom_dna_script_" + f.name, f.gameplay.dnaScriptSource, "{}");
         if(!f.gameplay.respawnBehavior.empty()) {
             const auto id="LiteralCrabRespawn:"+f.name;
             index.addBuiltinPatch({f.gameplay.respawnBehavior,id,"contains:"+id},

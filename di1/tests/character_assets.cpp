@@ -203,6 +203,21 @@ static std::string texturePath(std::string_view bundleBytes) {
     }
     return path + ".tbody";
 }
+static std::string materialChunk() {
+    // Two materials share one shader. These are grouped arrays, not repeated
+    // name/parameters records. The latter layout caused the native null read.
+    std::string data(20,'\0');std::memcpy(data.data(),"MATP",4);
+    word(data,4,2);word(data,12,2);word(data,16,1);
+    data.append("synthetic_shader",17);data.resize((data.size()+3)&~std::size_t(3));
+    const auto count=data.size();data.resize(count+4);word(data,count,2);
+    data.append("material_A",11);data.append("material_B",11);
+    data.resize((data.size()+1)&~std::size_t(1));data.append(4,'\0');
+    data.resize((data.size()+3)&~std::size_t(3));
+    const auto hashes=data.size();data.resize(hashes+8);
+    word(data,hashes,0x12345678);word(data,hashes+4,0x87654321);
+    data.resize((data.size()+15)&~std::size_t(15));data.append(32,'\0');
+    word(data,8,static_cast<unsigned>(data.size()));return data;
+}
 static void textures(const fs::path& root) {
     const auto original = bundle(); const std::string body = "synthetic texture payload";
     auto a = figure(root / "textureA"), b = figure(root / "textureB", 1000901);
@@ -219,6 +234,9 @@ static void textures(const fs::path& root) {
     const auto privateA = served(assets, prefix(a) + "ui/icons/custom.mtb");
     const auto privateB = served(assets, prefix(b) + "ui/icons/custom.mtb");
     const auto textureA = texturePath(privateA), textureB = texturePath(privateB);
+    // Frozen pre-refactor output: figure namespaces keep their original FNV
+    // seed, byte order and concatenation, including the numeric SKU text.
+    CHECK(textureA == "textures/8f9a054463ca1445.tbody");
     CHECK(textureA != textureB && textureA != "textures/3132333435363738.tbody" && textureB != "textures/3132333435363738.tbody");
     CHECK(served(assets, textureA) == body && served(assets, textureB) == body);
     CHECK(customAssetPath(figures[0], "textures/3132333435363738.tbody") == textureA);
@@ -230,12 +248,11 @@ static void textures(const fs::path& root) {
     CHECK(served(assets, "textures/3132333435363738.tbody") == "original global texture");
     // Native model MTB: nameless multi-texture TEXB followed by material data.
     // Only hashes change; material offsets and every material byte are retained.
-    std::string model(80,'\0');std::memcpy(model.data(),"BNDL",4);
-    word(model,4,1);word(model,8,80);word(model,12,2);
-    std::memcpy(model.data()+16,"TEXB",4);word(model,20,3);word(model,24,44);word(model,28,2);
+    std::string model(64,'\0');std::memcpy(model.data(),"BNDL",4);
+    word(model,4,1);word(model,12,2);
+    std::memcpy(model.data()+16,"TEXB",4);word(model,20,3);word(model,24,48);word(model,28,2);
     std::memcpy(model.data()+36,"12345678",8);std::memcpy(model.data()+48,"87654321",8);
-    std::memcpy(model.data()+60,"MATP",4);word(model,64,2);word(model,68,20);
-    std::memcpy(model.data()+72,"material",8);
+    model+=materialChunk();word(model,8,static_cast<unsigned>(model.size()));
     auto m=figure(root/"model-textures",1000902);
     write(fs::path(m.modPath)/m.assetDirectory/"characters/model.mtb",model);
     write(fs::path(m.modPath)/m.assetDirectory/"textures/3132333435363738.tbody",body);
@@ -245,11 +262,33 @@ static void textures(const fs::path& root) {
         CHECK(result.size()==model.size() && result.substr(0,36)==model.substr(0,36));
         CHECK(result.substr(36,8)!=model.substr(36,8) && result.substr(44)==model.substr(44));
     }
-    word(model,68,21);auto malformed=figure(root/"bad-model-chunk",1000903);
+    word(model,72,21);auto malformed=figure(root/"bad-model-chunk",1000903);
     write(fs::path(malformed.modPath)/malformed.assetDirectory/"model.mtb",model);
     write(fs::path(malformed.modPath)/malformed.assetDirectory/"textures/3132333435363738.tbody",body);
     const auto before=assets.members.size();figures={malformed};prepareCustomAssetDirectories(assets,figures,messages);
     CHECK(figures.empty() && assets.members.size()==before);
+}
+static void malformedMaterials(const fs::path& root) {
+    auto data=materialChunk();
+    const auto check=[&](std::string table,unsigned serial) {
+        auto model=bundle();model+=table;word(model,12,2);word(model,8,static_cast<unsigned>(model.size()));
+        auto f=figure(root/("bad-material-"+std::to_string(serial)),1000950+serial);
+        write(fs::path(f.modPath)/f.assetDirectory/"model.mtb",model);
+        AssetIndex assets;generated(assets,"untouched","native");
+        const auto old=assets.members.size();std::vector<CustomFigure> figures{f};std::vector<std::string> messages;
+        prepareCustomAssetDirectories(assets,figures,messages);
+        CHECK(figures.empty() && assets.members.size()==old && assets.redirects.empty());
+        CHECK(logged(messages,"MATP"));
+    };
+    // Header strings end at38; material-count word at40, two names at44..65,
+    // shader-index array at66. Invalid shader1 of a single-shader bundle would
+    // become an unchecked native pointer read, even with no local texture body.
+    data[66]=1;check(data,0);
+    data=materialChunk();word(data,40,1);check(data,1);
+    data=materialChunk();word(data,16,0xffffffff);check(data,2);
+    data=materialChunk();data.resize(66);word(data,8,66);check(data,3);
+    // Regression for the converter's interleaved name/parameter representation.
+    data=materialChunk();data[55]='\x01';check(data,4);
 }
 
 static std::string script() {
@@ -284,6 +323,122 @@ static void scripts(const fs::path& root) {
     CHECK(word(result, 12) == result.size() && word(result, 0x30) == 3);
     CHECK(result.substr(16, 0x60) == original.substr(16, 0x60));
     CHECK(served(assets, "characters/custom.sx") == original);
+}
+
+static void standaloneMounts(const fs::path& root) {
+    auto* state = luaL_newstate(); luaL_openlibs(state);
+    const auto binary = compiled(state, dna);
+    auto f = figure(root / "shared-private-assets");
+    const auto folder = fs::path(f.modPath) / f.assetDirectory;
+    const auto secondMod = root / "second-tool-assets";
+    const std::string body = "synthetic texture payload";
+    const auto originalScript = script(), originalBundle = bundle();
+    for (const auto& mount : {folder, secondMod / "tool-assets"}) {
+        write(mount / "characters/ts_zurg.dnax", mount == folder ? dna : binary);
+        write(mount / "characters/ts_zurg/ts_zurg.bent", "private model");
+        write(mount / "characters/custom.sx", originalScript);
+        write(mount / "ui/icons/custom.mtb", originalBundle);
+        write(mount / "textures/3132333435363738.tbody", body);
+    }
+    AssetIndex assets;
+    generated(assets, "characters/ts_zurg.dnax", "original boss DNA");
+    generated(assets, "characters/ts_zurg/ts_zurg.bent", "original boss model");
+    generated(assets, "textures/3132333435363738.tbody", "original global texture");
+    std::vector<CustomFigure> figures{f}; std::vector<std::string> messages;
+    prepareCustomAssetDirectories(assets, figures, messages);
+    CHECK(figures.size() == 1);
+    if (figures.empty()) { lua_close(state); return; }
+
+    ResourceAliases first, second;
+    const std::string firstKey = "tools/lcr_ts3_zurg_blaster", secondKey = "tools/second_blaster";
+    const auto firstPrefix = "characters/literalcrab/assets/" + firstKey + "/";
+    const auto secondPrefix = "characters/literalcrab/assets/" + secondKey + "/";
+    preparePrivateAssetDirectory(assets, f.modPath, f.assetDirectory, firstKey, first);
+    preparePrivateAssetDirectory(assets, secondMod.wstring(), "tool-assets", secondKey, second);
+    CHECK(assets.members.size() == 18);
+    const auto logical = "characters/ts_zurg/ts_zurg";
+    CHECK(privateAssetPath(first, "Entity|characters/TS_Zurg/TS_Zurg") == "Entity|" + firstPrefix + logical);
+    CHECK(privateAssetPath(second, "characters\\TS_Zurg\\TS_Zurg.bent") == secondPrefix + logical + ".bent");
+    CHECK(privateAssetPath(first, "characters/absent") == "characters/absent");
+    CHECK(privateAssetPath(ResourceAliases{}, logical) == logical);
+    CHECK(privateAssetDnaPatch(ResourceAliases{}).empty());
+    CHECK(served(assets, firstPrefix + "characters/ts_zurg.dnax").starts_with(
+        "-- LiteralCrabAsset:" + firstKey + ":characters/ts_zurg.dnax\n"));
+    const auto privateBinary = served(assets, secondPrefix + "characters/ts_zurg.dnax");
+    CHECK(privateBinary.starts_with(std::string("\x1bLua", 4)) &&
+        privateBinary.find("LiteralCrabAsset:" + secondKey + ":characters/ts_zurg.dnax") != privateBinary.npos);
+    CHECK(binary.find("LiteralCrabAsset:") == binary.npos);
+    for (const auto& [aliases, mountPrefix] : {std::pair{first, firstPrefix}, std::pair{second, secondPrefix}}) {
+        const auto mappedScript = served(assets, mountPrefix + "characters/custom.sx");
+        CHECK(literal(mappedScript, 0) == mountPrefix + logical);
+        CHECK(literal(mappedScript, 1) == "DNA|" + mountPrefix + "characters/ts_zurg.dnax");
+        CHECK(literal(mappedScript, 2) == "not an asset");
+        CHECK(mappedScript.substr(16, 0x60) == originalScript.substr(16, 0x60));
+        const auto mappedBundle = served(assets, mountPrefix + "ui/icons/custom.mtb");
+        CHECK(mappedBundle.substr(0, 44) == originalBundle.substr(0, 44) &&
+            mappedBundle.substr(52) == originalBundle.substr(52));
+        const auto texture = texturePath(mappedBundle);
+        CHECK(texture == privateAssetPath(aliases, "textures/3132333435363738.tbody"));
+        CHECK(served(assets, texture) == body);
+        CHECK(assets.find(mountPrefix + logical + ".bent"));
+        CHECK(!assets.find(mountPrefix + "characters/ts_zurg.dnax"));
+    }
+    const auto firstTexture = privateAssetPath(first, "textures/3132333435363738.tbody");
+    const auto secondTexture = privateAssetPath(second, "textures/3132333435363738.tbody");
+    const auto figureTexture = customAssetPath(figures[0], "textures/3132333435363738.tbody");
+    CHECK(firstTexture != secondTexture && firstTexture != figureTexture && secondTexture != figureTexture);
+    CHECK(served(assets, "characters/ts_zurg.dnax") == "original boss DNA");
+    CHECK(served(assets, "characters/ts_zurg/ts_zurg.bent") == "original boss model");
+    CHECK(served(assets, "textures/3132333435363738.tbody") == "original global texture");
+
+    // The generic numeric-key path produces the exact same figure output and
+    // disk redirects as the public figure wrapper, including the DNA patch.
+    AssetIndex numeric; ResourceAliases numericAliases;
+    preparePrivateAssetDirectory(numeric, f.modPath, f.assetDirectory, std::to_string(f.sku), numericAliases);
+    CHECK(numericAliases == figures[0].assetAliases);
+    CHECK(privateAssetDnaPatch(numericAliases) == customAssetDnaPatch(figures[0]));
+    for (const auto& member : numeric.members) CHECK(served(numeric, member.name) == served(assets, member.name));
+    for (const auto& redirect : numeric.redirects) {
+        const auto* target = assets.find(redirect.path); CHECK(target && *target == redirect.target);
+    }
+
+    crabe::mods::Index index; addCustomAssetPatches(index, figures);
+    for (const auto& [key, aliases] : {std::pair{firstKey, first}, std::pair{secondKey, second}}) {
+        const auto path = privateAssetPath(aliases, "characters/ts_zurg.dnax");
+        const auto marker = "LiteralCrabAsset:" + key + ":characters/ts_zurg.dnax";
+        index.addBuiltinPatch({path, marker, "contains:" + marker}, key, privateAssetDnaPatch(aliases), "{}");
+    }
+    CHECK(crabe::mods::configure(luaApi(state), std::move(index), [](const char*, ...) {}, false));
+    executeDna(state, served(assets, firstPrefix + "characters/ts_zurg.dnax"), "", firstPrefix + logical);
+    executeDna(state, privateBinary, "", secondPrefix + logical);
+    executeDna(state, served(assets, prefix(f) + "characters/ts_zurg.dnax"), "", prefix(f) + logical);
+    executeDna(state, dna, "characters/ts_zurg.dnax", "characters/TS_Zurg/TS_Zurg");
+    lua_close(state);
+
+    // Every failure preserves both index content and the caller's existing
+    // alias list, including validation after an earlier resource was prepared.
+    const auto previous = assets.members;
+    const auto redirects = assets.redirects;
+    const auto beforeAliases = first;
+    const auto rejectGeneric = [&](std::string_view directory, std::string_view key, std::string_view reason) {
+        bool rejected{};
+        try { preparePrivateAssetDirectory(assets, f.modPath, directory, key, first); }
+        catch (const std::exception& error) { rejected = true; CHECK(std::string(error.what()).find(reason) != std::string::npos); }
+        CHECK(rejected && first == beforeAliases && assets.members.size() == previous.size());
+        CHECK(assets.redirects.size() == redirects.size());
+        for (std::size_t i = 0; i < assets.members.size() && i < previous.size(); ++i)
+            CHECK(assets.members[i].name == previous[i].name && assets.members[i].generated == previous[i].generated);
+        for (std::size_t i = 0; i < assets.redirects.size() && i < redirects.size(); ++i)
+            CHECK(assets.redirects[i].path == redirects[i].path && assets.redirects[i].target == redirects[i].target);
+    };
+    for (const auto* key : {"", "Tools/lcr_blaster", "tools\\lcr_blaster", "../tools", "tools/./lcr_blaster", ".", "tools/.", "./tools", "tools//a"})
+        rejectGeneric(f.assetDirectory, key, "invalid private resource namespace");
+    rejectGeneric(f.assetDirectory, firstKey, "already claimed");
+    rejectGeneric(f.assetDirectory, std::to_string(f.sku), "already claimed");
+    rejectGeneric("../outside", "tools/unpublished", "invalid private asset folder");
+    write(fs::path(f.modPath) / "broken/a/model.bent", "valid earlier resource");
+    write(fs::path(f.modPath) / "broken/z/invalid.sx", "invalid script");
+    rejectGeneric("broken", "tools/unpublished", "unsupported private SLNG");
 }
 
 static void reject(AssetIndex& assets, CustomFigure f, std::string_view reason) {
@@ -351,7 +506,8 @@ static void reparsePoints(const fs::path& root) {
 int main() {
     try {
         Fixture fixture;
-        isolatedMounts(fixture.root); textures(fixture.root); scripts(fixture.root);
+        isolatedMounts(fixture.root); textures(fixture.root); malformedMaterials(fixture.root);
+        scripts(fixture.root); standaloneMounts(fixture.root);
         rejectedMounts(fixture.root); reparsePoints(fixture.root);
     } catch (const std::exception& error) { std::printf("EXCEPTION: %s\n", error.what()); ++failures; }
     std::printf("Private character asset checks: %u failure(s).\n", failures);

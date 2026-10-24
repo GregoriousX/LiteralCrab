@@ -2,9 +2,11 @@
 // AES primitives adapted from CrabeLoader's application/gateway.cpp (GPL-3.0).
 // DI1's category key and row-dependent field IV are validated separately.
 #include "di1/figure_registry.hpp"
+#include "di1/lua_data.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
@@ -129,10 +131,47 @@ std::vector<std::string> commaList(std::string value, bool unique=true) {
     }
     return result;
 }
-CustomGameplay gameplaySection(const std::wstring& file, std::string_view actor) {
+// A mod-relative author file. Links and junctions are refused like private assets.
+std::string modFile(const std::wstring& modPath, const std::string& relative, const char* extension, std::size_t limit) {
+    if (!resourcePath(relative) || !lower(relative).ends_with(extension) || relative.front() == '.')
+        throw std::runtime_error(std::string("author file must be a relative ") + extension + " path inside the mod: " + relative);
+    std::wstring path = modPath;
+    std::size_t at{};
+    while (at <= relative.size()) {
+        const auto slash = relative.find('/', at);
+        const auto part = relative.substr(at, slash == std::string::npos ? std::string::npos : slash - at);
+        path += L"\\" + std::wstring(part.begin(), part.end());
+        const auto flags = GetFileAttributesW(path.c_str());
+        if (flags == INVALID_FILE_ATTRIBUTES || (flags & FILE_ATTRIBUTE_REPARSE_POINT))
+            throw std::runtime_error("author file missing or behind a link: " + relative);
+        if (slash == std::string::npos) break;
+        at = slash + 1;
+    }
+    const auto handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot open author file: " + relative);
+    LARGE_INTEGER size{};
+    std::string bytes;
+    if (GetFileSizeEx(handle, &size) && size.QuadPart >= 0 && static_cast<unsigned long long>(size.QuadPart) <= limit) {
+        bytes.resize(static_cast<std::size_t>(size.QuadPart));
+        DWORD read{};
+        if (!bytes.empty() && (!ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) || read != bytes.size()))
+            bytes.clear(), size.QuadPart = -1;
+    } else size.QuadPart = -1;
+    CloseHandle(handle);
+    if (size.QuadPart < 0) throw std::runtime_error("author file unreadable or larger than " + std::to_string(limit >> 10) + " KiB: " + relative);
+    if (bytes.starts_with("\x1bLua")) throw std::runtime_error("author Lua must be source text, not bytecode: " + relative);
+    return bytes;
+}
+template<class T> T mode(const std::map<std::string, std::string>& fields, const char* key,
+    std::initializer_list<std::pair<const char*, T>> choices) {
+    const auto value = lower(get(fields, key, "auto"));
+    for (const auto& [name, result] : choices) if (value == name) return result;
+    throw std::runtime_error(std::string("invalid ") + key + " value: " + value);
+}
+CustomGameplay gameplaySection(const std::wstring& file, std::string_view actor, std::string_view source) {
     const auto fields = characterSection(file, L"Character.Gameplay");
     CustomGameplay result;
-    if (fields.empty()) return result;
+    if (fields.empty() && source.empty()) return result;
     for (const auto& [key, _] : fields)
         if (key != "sourceactor" && key != "sourcedna" && key != "item" && key != "prop" &&
             key != "ability" && key != "preloadactors" && key != "preloadfiles" &&
@@ -145,6 +184,14 @@ CustomGameplay gameplaySection(const std::wstring& file, std::string_view actor)
             throw std::runtime_error("unknown Character.Gameplay key: " + key);
     result.sourceActor = get(fields, "sourceactor");
     result.sourceDna = get(fields, "sourcedna");
+    if (!source.empty()) {
+        if (!result.sourceActor.empty() || !result.sourceDna.empty())
+            throw std::runtime_error("use either [Character] Source or Character.Gameplay SourceActor/SourceDNA, not both");
+        // Source names a native actor row, or a DNA file for actors without one.
+        (lower(source).ends_with(".dnax") ? result.sourceDna : result.sourceActor) = std::string(source);
+    }
+    if (result.sourceActor.empty() && result.sourceDna.empty())
+        throw std::runtime_error("Character.Gameplay needs [Character] Source (or SourceActor/SourceDNA)");
     result.inventorySource = get(fields, "inventorysource");
     result.inventoryExclude = commaList(get(fields, "inventoryexclude"));
     if (!result.inventorySource.empty() && !identifier(result.inventorySource))
@@ -167,12 +214,16 @@ CustomGameplay gameplaySection(const std::wstring& file, std::string_view actor)
     weapon.radius=number("itemprojectileradius",0.001,10);weapon.speed=number("itemprojectilespeed",0.1,1000);
     weapon.lifetime=number("itemprojectilelifetime",0.01,120);weapon.damage=number("itemprojectiledamage",0,10000);
     weapon.scale=number("itemprojectilescale",0.001,10);
-    if(weapon.enabled()) {
-        if(result.item.empty() || !identifier(weapon.source) || !resourcePath(weapon.dna) || !lower(weapon.dna).ends_with(".dnax") ||
-           !resourcePath(weapon.script) || !lower(weapon.script).ends_with(".sx"))
-            throw std::runtime_error("ItemWeaponSource needs Item, ItemToolDNA and ItemToolScript");
-    } else if(!weapon.dna.empty() || !weapon.script.empty() || weapon.radius || weapon.speed || weapon.lifetime || weapon.damage || weapon.scale)
-        throw std::runtime_error("projectile settings need ItemWeaponSource");
+    // ItemToolDNA/ItemToolScript/ItemWeaponSource are inferred from Item's tool
+    // actor at startup when omitted; explicit values must still be well formed.
+    if(weapon.enabled() && !identifier(weapon.source)) throw std::runtime_error("ItemWeaponSource must name a native gun");
+    if((!weapon.dna.empty() && (!resourcePath(weapon.dna) || !lower(weapon.dna).ends_with(".dnax"))) ||
+       (!weapon.script.empty() && (!resourcePath(weapon.script) || !lower(weapon.script).ends_with(".sx"))))
+        throw std::runtime_error("ItemToolDNA/ItemToolScript must be relative .dnax/.sx paths");
+    if(!weapon.enabled() && (!weapon.dna.empty() || !weapon.script.empty()))
+        throw std::runtime_error("ItemToolDNA/ItemToolScript need ItemWeaponSource");
+    if((weapon.enabled() || weapon.radius || weapon.speed || weapon.lifetime || weapon.damage || weapon.scale) && result.item.empty())
+        throw std::runtime_error("projectile settings need the Item they apply to");
     const auto aim=get(fields,"aimoffset");
     if(!aim.empty()) {
         const auto values=commaList(aim,false);if(values.size()!=3) throw std::runtime_error("AimOffset requires three numbers");
@@ -193,14 +244,13 @@ CustomGameplay gameplaySection(const std::wstring& file, std::string_view actor)
     for (unsigned i=0;i<2;++i) if (!result.controlSources[i].empty() &&
         (!identifier(result.controlSources[i]) || (i==0 ? result.item.empty() : result.prop.empty())))
         throw std::runtime_error("a control source needs a valid identifier and its corresponding loadout slot");
-    if (!identifier(result.sourceActor) || lower(result.sourceActor) == lower(actor))
-        throw std::runtime_error("SourceActor must name a different source avatar; use a private Actor/Gateway alias");
+    if (!result.sourceActor.empty() && (!identifier(result.sourceActor) || lower(result.sourceActor) == lower(actor)))
+        throw std::runtime_error("Source/SourceActor must name a different native actor; use a private Actor/Gateway alias");
     if (!lower(actor).starts_with("lcr_"))
         throw std::runtime_error("private gameplay Actor/Gateway must start with LCR_ to avoid shipped actor names");
-    if (!resourcePath(result.sourceDna) || !lower(result.sourceDna).ends_with(".dnax"))
+    if (!result.sourceDna.empty() && (!resourcePath(result.sourceDna) || !lower(result.sourceDna).ends_with(".dnax")))
         throw std::runtime_error("SourceDNA must be a relative .dnax asset path");
-    if (result.item.empty() && result.prop.empty() && result.ability.empty())
-        throw std::runtime_error("Character.Gameplay needs Item, Prop or Ability");
+    // Item/Prop/Ability are optional: startup chooses documented defaults.
     for (const auto* tool : {&result.item, &result.prop, &result.ability})
         if (!tool->empty() && !identifier(*tool)) throw std::runtime_error("invalid gameplay tool identifier");
     result.preloadActors = commaList(get(fields, "preloadactors"));
@@ -220,14 +270,16 @@ CustomGameplay gameplaySection(const std::wstring& file, std::string_view actor)
     }
     return result;
 }
-void validate(const CustomFigure& figure) {
+// A gameplay figure may leave BaseCharacter for startup, which uses its template.
+void validate(const CustomFigure& figure, bool resolved = true) {
     if (figure.sku < firstCustomSku || figure.sku > lastCustomSku)
-        throw std::runtime_error("SkuId must be an explicit integer in 1000100..1999999");
+        throw std::runtime_error("SkuId must be an integer in 1000100..1999999");
     // The portal also uses Name to construct an asset path; display text has its own field.
     if (!identifier(figure.name)) throw std::runtime_error("Name must be a 1..127 byte identifier");
-    if (!identifier(figure.gateway) || !identifier(figure.actor) || !identifier(figure.baseCharacter) ||
+    const bool deferredBase = !resolved && figure.baseCharacter.empty() && figure.gameplay.enabled();
+    if (!identifier(figure.gateway) || !identifier(figure.actor) || (!deferredBase && !identifier(figure.baseCharacter)) ||
         !identifier(figure.playset)) throw std::runtime_error("invalid Gateway, Actor, BaseCharacter or Playset identifier");
-    if (!stockName(figure.baseCharacter)) throw std::runtime_error("BaseCharacter must name a stock DI1 gateway figure");
+    if (!deferredBase && !stockName(figure.baseCharacter)) throw std::runtime_error("BaseCharacter must name a stock DI1 gateway figure");
     // Native creation resolves the registered gateway name directly. Until a separate actor
     // alias bridge exists, accepting a different Actor would register an unspawnable figure.
     if (lower(figure.actor) != lower(figure.gateway))
@@ -388,30 +440,58 @@ std::vector<CustomFigure> loadCustomFigures(const std::vector<mods::Mod>& mods, 
             const auto fields = characterSection(mod.path + L"\\mod.ini");
             if (fields.empty()) continue;
             if (result.size() >= maximumFigures) throw std::runtime_error("at most 64 custom figures are supported");
-            const auto skuText = get(fields, "skuid");
-            if (skuText.size() != 7 || !std::all_of(skuText.begin(), skuText.end(),
-                [](char ch) { return ch >= '0' && ch <= '9'; }))
-                throw std::runtime_error("SkuId must be an explicit integer in 1000100..1999999");
+            for (const auto& [key, _] : fields)
+                if (key != "skuid" && key != "name" && key != "gateway" && key != "actor" && key != "basecharacter" &&
+                    key != "displayname" && key != "description" && key != "icon" && key != "playset" &&
+                    key != "assetdirectory" && key != "source" && key != "template" && key != "body" &&
+                    key != "animations" && key != "dna" && key != "dnascript")
+                    messages.push_back("Custom figure " + mod.folder + ": unknown Character key ignored: " + key);
             CustomFigure figure;
-            figure.sku = static_cast<std::uint32_t>(std::stoul(skuText));
             figure.name = get(fields, "name");
-            figure.gateway = get(fields, "gateway");
+            if (!identifier(figure.name)) throw std::runtime_error("Name must be a 1..127 byte identifier");
+            const auto skuText = get(fields, "skuid");
+            if (skuText.empty()) figure.sku = defaultFigureSku(figure.name);
+            else if (skuText.size() != 7 || !std::all_of(skuText.begin(), skuText.end(),
+                [](char ch) { return ch >= '0' && ch <= '9'; }))
+                throw std::runtime_error("SkuId must be an integer in 1000100..1999999");
+            else figure.sku = static_cast<std::uint32_t>(std::stoul(skuText));
+            // The private gameplay actor must be an LCR_ name; derive one from Name.
+            figure.gateway = get(fields, "gateway", lower(figure.name).starts_with("lcr_") ? figure.name : "LCR_" + figure.name);
             figure.actor = get(fields, "actor", figure.gateway);
             figure.baseCharacter = get(fields, "basecharacter");
             figure.displayName = get(fields, "displayname", figure.name);
             figure.description = get(fields, "description");
-            figure.icon = get(fields, "icon");
+            // A generic portal portrait until the author ships one.
+            figure.icon = get(fields, "icon", "ui/charactericons/blankavatar");
             figure.playset = get(fields, "playset", "RumpusRoom");
-            figure.gameplay = gameplaySection(mod.path + L"\\mod.ini", figure.actor);
+            figure.gameplay = gameplaySection(mod.path + L"\\mod.ini", figure.actor, get(fields, "source"));
+            auto& gameplay = figure.gameplay;
+            gameplay.templateFigure = get(fields, "template");
+            gameplay.body = mode<BodyMode>(fields, "body", {{"auto", BodyMode::Auto}, {"source", BodyMode::Source}, {"template", BodyMode::Template}});
+            gameplay.animations = mode<AnimationMode>(fields, "animations", {{"auto", AnimationMode::Auto},
+                {"source", AnimationMode::Source}, {"complete", AnimationMode::Complete}, {"template", AnimationMode::Template}});
+            gameplay.dnaOverlay = get(fields, "dna");
+            gameplay.dnaScript = get(fields, "dnascript");
+            if (!gameplay.enabled() && (!gameplay.templateFigure.empty() || !gameplay.dnaOverlay.empty() || !gameplay.dnaScript.empty() ||
+                gameplay.body != BodyMode::Auto || gameplay.animations != AnimationMode::Auto))
+                throw std::runtime_error("Template, Body, Animations, DNA and DNAScript need a gameplay Source");
+            if (!gameplay.templateFigure.empty() && !templateFigure(gameplay.templateFigure))
+                throw std::runtime_error("Template must name a playable stock biped figure, for example AV_Buzz or LR_LoneRanger");
+            if (!gameplay.dnaOverlay.empty())
+                gameplay.overlayPatch = dnaOverlayPatch(modFile(mod.path, gameplay.dnaOverlay, ".lua", 1u << 20), figure.name);
+            if (!gameplay.dnaScript.empty()) gameplay.dnaScriptSource = modFile(mod.path, gameplay.dnaScript, ".lua", 4u << 20);
+            // Portal-only figures keep the historical presentation default.
+            if (figure.baseCharacter.empty() && !gameplay.enabled()) figure.baseCharacter = "AV_Buzz";
             figure.assetDirectory = get(fields, "assetdirectory");
             figure.modPath = mod.path;
             if (!figure.assetDirectory.empty() && (!resourcePath(figure.assetDirectory) ||
                 lower(figure.assetDirectory) == "assets" || lower(figure.assetDirectory).starts_with("assets/") ||
                 figure.assetDirectory.front() == '.' || figure.assetDirectory.ends_with('/')))
                 throw std::runtime_error("AssetDirectory must be a relative mod folder outside the global assets folder");
-            validate(figure);
+            validate(figure, false);
             if (skus.count(figure.sku) || names.count(lower(figure.name)) || gateways.count(lower(figure.gateway)))
-                throw std::runtime_error("duplicate custom SkuId, Name or Gateway");
+                throw std::runtime_error(std::string("duplicate custom SkuId, Name or Gateway") +
+                    (skuText.empty() && skus.count(figure.sku) ? " (the SkuId derived from Name is taken; set SkuId)" : ""));
             const auto toolActor=[](const CustomFigure& f) { return "lcr_"+std::to_string(f.sku)+"_item"; };
             if (figure.gameplay.itemWeapon.enabled() && lower(figure.actor)==toolActor(figure))
                 throw std::runtime_error("custom actor conflicts with its private item actor");
@@ -524,5 +604,86 @@ for _, figure in ipairs(figures) do
 end
 )lua";
     return source;
+}
+
+std::uint32_t defaultFigureSku(std::string_view name) {
+    std::uint32_t hash = 2166136261u;
+    for (const auto ch : lower(name)) { hash ^= static_cast<unsigned char>(ch); hash *= 16777619u; }
+    return firstCustomSku + hash % (lastCustomSku - firstCustomSku + 1);
+}
+
+const std::vector<std::string_view>& templateFigures() {
+    // Stock bipeds whose actor row is the lowercase gateway name. Cars and the
+    // Infinite/Glow variants are excluded: their bodies are not general templates.
+    static const std::vector<std::string_view> figures = {"AV_Buzz", "AV_Woody", "AV_Jessie", "LR_LoneRanger",
+        "LR_Tonto", "PIR_JackSparrow", "PIR_Barbossa", "PIR_DavyJones", "AV_MrIncredible", "AV_ElastiGirl", "AV_Dash",
+        "AV_Violet", "AV_Syndrome", "MU_Sully", "MU_Mike", "MU_Randall", "TB_MickeyMouse", "NBC_JackSkellington",
+        "TAN_Rapunzel", "FRO_Anna", "FRO_Elsa", "WR_Ralph", "WR_Vanellope", "PNF_Perry", "PNF_Phineas"};
+    return figures;
+}
+bool templateFigure(std::string_view gateway) {
+    const auto key = lower(gateway);
+    return std::any_of(templateFigures().begin(), templateFigures().end(), [&](auto name) { return lower(name) == key; });
+}
+
+std::string dnaOverlayPatch(std::string_view source, std::string_view label) {
+    data::Globals globals;
+    try { globals = data::parseText(source); }
+    catch (const std::exception& error) { throw std::runtime_error(std::string("DNA overlay is not a data-only Lua table: ") + error.what()); }
+    for (const auto& [name, _] : globals.fields)
+        if (name != "DNA" && name != "Remove") throw std::runtime_error("DNA overlay may only assign DNA and Remove, not " + name);
+    if (!globals.indices.empty() || !globals.flags.empty()) throw std::runtime_error("invalid DNA overlay globals");
+    const auto* dna = globals.field("DNA");
+    const auto* remove = globals.field("Remove");
+    if ((dna && !dna->isTable()) || (remove && !remove->isTable()) || (!dna && !remove))
+        throw std::runtime_error("DNA overlay needs a DNA table and/or a Remove list");
+    std::string paths;
+    if (remove) {
+        if (!remove->table->fields.empty() || !remove->table->flags.empty()) throw std::runtime_error("Remove must be a list of dotted DNA paths");
+        for (const auto& [_, item] : remove->table->indices) {
+            if (!item.isString() || item.string.empty() || item.string.size() > 255 || item.string.front() == '.' ||
+                item.string.back() == '.' || item.string.find("..") != std::string::npos ||
+                !std::all_of(item.string.begin(), item.string.end(), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '.'; }))
+                throw std::runtime_error("Remove entries must be dotted identifier paths such as AgentGadgets.Health.regenerateRate");
+            paths += mods::luaQuote(item.string) + ",";
+        }
+    }
+    data::Value empty; empty.type = data::Value::Type::Table; empty.table = std::make_shared<data::Table>();
+    return "do\nlocal overlay=" + data::literal(dna ? *dna : empty) + "\nlocal remove={" + paths + "}\n" + R"lua(
+local function list(t)
+    local count=0
+    for key in pairs(t) do
+        if type(key)~='number' or key<1 or key%1~=0 then return false end
+        count=count+1
+    end
+    return count>0 and count==#t
+end
+local function copy(value)
+    if type(value)~='table' then return value end
+    local result={}
+    for key,item in pairs(value) do result[key]=copy(item) end
+    return result
+end
+-- Tables merge by key; lists and plain values replace the native value.
+local function merge(target,source)
+    for key,value in pairs(source) do
+        if type(value)=='table' and type(target[key])=='table' and not list(value) then merge(target[key],value)
+        else target[key]=copy(value) end
+    end
+end
+if type(DNA)=='table' then
+    merge(DNA,overlay)
+    for _,path in ipairs(remove) do
+        local node,key=DNA,nil
+        for part in string.gmatch(path,'[^%.]+') do
+            if key then node=type(node)=='table' and node[key] or nil end
+            key=part
+        end
+        if type(node)=='table' and key then node[key]=nil end
+    end
+    log('APPLIED: author DNA overlay '..)lua" + mods::luaQuote(label) + R"lua()
+end
+end
+)lua";
 }
 }
