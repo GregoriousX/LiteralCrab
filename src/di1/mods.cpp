@@ -14,6 +14,7 @@
 #include "di1/character_loadout.hpp"
 #include "di1/avatar_motion.hpp"
 #include "di1/custom_tools.hpp"
+#include "di1/custom_audio.hpp"
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
 #include "di1/toybox_share.hpp"
@@ -128,7 +129,8 @@ namespace {
     bool __fastcall scarePoseMessage(void* self, void*, const char* message, void* data,
         std::uint32_t sender, std::uint32_t receiver) {
         const bool result = originalScareMessage(self, message, data, sender, receiver);
-        if (!scarePoseBusy) {
+        observeCustomAudioMessage(message, receiver);
+        if (scareActor && !scarePoseBusy) {
             scarePoseBusy = true;
             finishScarePoses();
             playScarePose(message, sender, receiver);
@@ -136,10 +138,25 @@ namespace {
         }
         return result;
     }
-    bool installScarePose(HMODULE host) {
+    // Shared observer for custom audio and the optional megaphone pose. The
+    // dispatcher always runs first with its original arguments and return value.
+    bool installActorMessageObserver(HMODULE host) {
         if (originalScareMessage) return true;
+        const auto base=reinterpret_cast<std::uintptr_t>(host);
+        if (!codeMatches(base+0x278A90,"56 8B F1 8B 06 8B 50 0C 6A 00 FF D2") ||
+            !callsTo(base,0x27A33D,0x278A90)) return false;
+        void* trampoline{};auto* target=reinterpret_cast<void*>(base+0x278A90);
+        if (MH_CreateHook(target,reinterpret_cast<void*>(&scarePoseMessage),&trampoline)!=MH_OK) return false;
+        originalScareMessage=reinterpret_cast<ScareMessage>(trampoline);
+        if (MH_EnableHook(target)==MH_OK) return true;
+        MH_RemoveHook(target);originalScareMessage=nullptr;return false;
+    }
+    bool installScarePose(HMODULE host) {
+        if (scareActor) return true;
         const auto base = reinterpret_cast<std::uintptr_t>(host);
-        if (!codeMatches(base + 0x278A90, "56 8B F1 8B 06 8B 50 0C 6A 00 FF D2") ||
+        // Custom audio may already have installed the shared observer; its hook
+        // replaced the dispatcher prologue after the same check passed.
+        if ((!originalScareMessage && !codeMatches(base + 0x278A90, "56 8B F1 8B 06 8B 50 0C 6A 00 FF D2")) ||
             !callsTo(base, 0x27A33D, 0x278A90) ||
             !codeMatches(base + 0x326030, "83 EC 08 8B 44 24 0C 8D 0C 24") ||
             !codeMatches(base + 0x31F6B0, "8B 89 F0 00 00 00 85 C9") ||
@@ -160,14 +177,7 @@ namespace {
         scareMotionStop = reinterpret_cast<ScareMotionStop>(base + 0x31F190);
         scareMotionEnded = reinterpret_cast<ScareMotionEnded>(base + 0x31F1D0);
         scareGameTime = reinterpret_cast<const volatile std::uint32_t*>(base + 0x127DF98);
-        void* trampoline{};
-        auto* target = reinterpret_cast<void*>(base + 0x278A90);
-        if (MH_CreateHook(target, reinterpret_cast<void*>(&scarePoseMessage), &trampoline) != MH_OK) return false;
-        originalScareMessage = reinterpret_cast<ScareMessage>(trampoline);
-        if (MH_EnableHook(target) == MH_OK) return true;
-        MH_RemoveHook(target);
-        originalScareMessage = nullptr;
-        return false;
+        return installActorMessageObserver(host);
     }
     struct Function {
         std::uint32_t rva;
@@ -350,6 +360,16 @@ bool installMods(HMODULE host) {
         addCustomGameplayPatches(index, figures);
         addCustomAssetPatches(index, figures);
         addCustomToolPatches(index, tools);
+        const auto audio=loadCustomAudio(index.mods,figures,tools,messages);
+        if (!audio.empty()) {
+            if (installCustomAudio(host,audio,figures,tools)) {
+                const bool observed=installActorMessageObserver(host);
+                setCustomAudioMessageRouting(observed);
+                addCustomAudioPatches(index,audio,observed);
+                if (!observed) messages.push_back("Custom audio: native message observer unavailable; using private SOUND effects.");
+            }
+            else messages.push_back("Custom audio unavailable: character/tool gameplay remains active without its audio declarations.");
+        }
         for (const auto& message : messages) log("%s", message.c_str());
         installEngineFeatures(host, index.mods);
         if (characterFreedomActive()) {
@@ -384,6 +404,16 @@ bool installMods(HMODULE host) {
                     std::string(characterNativeActorHomesPatch), std::string("{Playset='") + home + "'}");
             index.addBuiltinPatch({"contains:AvatarInteractionHud", "contains:SummonMount"},
                 "character_mounts", std::string(characterMountsPatch), "{}");
+            // A custom figure's private DNA is a named chunk, which content
+            // targets never reach; its player types are not in any roster.
+            for (const auto& f : figures) if (f.gameplay.enabled()) {
+                std::string types;
+                for (const auto* mask : {&f.gameplay.expectedMask, &f.gameplay.sourceMask})
+                    if (!mask->empty()) types += "[" + mods::luaQuote(*mask) + "]=true,";
+                const auto targets = customGameplayDnaTargets(f);
+                index.addBuiltinPatch({targets[0], targets[1], targets[2]}, "character_mounts_" + f.name,
+                    std::string(characterMountsPatch), "{Custom={" + types + "}}");
+            }
             if (installCharacterTargets(reinterpret_cast<std::uintptr_t>(host))) {
                 index.addBuiltinPatch({"lr_shoottargets.dnax", "contains:target_bullseye"},
                     "character_targets", std::string(characterTargetsPatch), "{}");

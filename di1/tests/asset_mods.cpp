@@ -5,6 +5,7 @@
 #include "mods/file_redirect.hpp"
 #include "mods/zip.hpp"
 #include <windows.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -200,6 +201,22 @@ int main() {
     threw = false;
     try { zip::Archive archive((root / "damaged.zip").wstring()); member(archive, "a.bin"); } catch (const std::exception&) { threw = true; }
     CHECK(threw);
+
+    // Text data saved with a UTF-8 BOM is served without it (Lua 5.1 rejects
+    // the BOM); compiled chunks and other files are byte-identical.
+    {
+        AssetIndex bom;
+        const std::string marked = "\xEF\xBB\xBF" "DNA={}";
+        for (const auto* name : {"characters/a.dnax", "gamedb/b.lua", "characters/c.btx", "characters/d.bmx", "ui/e.mtb"}) {
+            write(root / "bom" / name, marked);
+            AssetMember item; item.name = name; item.file = (root / "bom" / name).wstring();
+            bom.members.push_back(std::move(item));
+        }
+        std::sort(bom.members.begin(), bom.members.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+        for (const auto* name : {"characters/a.dnax", "gamedb/b.lua", "characters/c.btx", "characters/d.bmx"})
+            CHECK(served(bom, name) == "DNA={}");
+        CHECK(served(bom, "ui/e.mtb") == marked);
+    }
 
     // Names.
     char path[maxAssetPath];

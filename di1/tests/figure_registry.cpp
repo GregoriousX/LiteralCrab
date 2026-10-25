@@ -113,7 +113,17 @@ static void manifestPolicy() {
         figures[0].gameplay.templateFigure == "PNF_Phineas" && figures[0].gameplay.animations == AnimationMode::Template);
     figures = loadCustomFigures({mod("[Character]\nName=PortalOnly\nGateway=LCR_PortalOnly\n")}, messages);
     CHECK(figures.size() == 1 && figures[0].baseCharacter == "AV_Buzz" && !figures[0].gameplay.enabled());
-    for (const char* bad : {"Template=AV_McQueen\n", "Body=npc\n", "Animations=all\n", "DNA=../outside.lua\n", "DNA=missing.lua\n"})
+    // Animation donors are separate from the body/inventory template.
+    figures = loadCustomFigures({mod("[Character]\nName=LCR_Big\nSource=butch\nTemplate=AV_Buzz\nAnimationTemplate=AV_MrIncredible\n"
+        "AnimationDonors=Ship:PIR_DavyJones,Mech:Bike:MU_Mike\n")}, messages);
+    CHECK(figures.size() == 1 && figures[0].gameplay.animationTemplate == "AV_MrIncredible");
+    if (!figures.empty()) CHECK((figures[0].gameplay.animationDonors == std::vector<std::pair<std::string, std::string>>{
+        {"Mech:Ship", "PIR_DavyJones"}, {"Mech:Bike", "MU_Mike"}}));
+    CHECK(interactionGroupName("ship") == "Mech:Ship" && interactionGroupName("Mech:VehicleDrive_SML") == "Mech:VehicleDrive_SML" &&
+        interactionGroupName("Core:Attacks").empty());
+    for (const char* bad : {"Template=AV_McQueen\n", "Body=npc\n", "Animations=all\n", "DNA=../outside.lua\n", "DNA=missing.lua\n",
+        "AnimationTemplate=AV_McQueen\n", "AnimationDonors=Ship\n", "AnimationDonors=Attacks:AV_Buzz\n",
+        "AnimationDonors=Ship:AV_McQueen\n", "AnimationDonors=Ship:PIR_DavyJones,Mech:Ship:PIR_Barbossa\n"})
         CHECK(loadCustomFigures({mod(std::string("[Character]\nName=Bad\nSource=butch\n") + bad)}, messages).empty());
     CHECK(loadCustomFigures({mod("[Character]\nName=Both\nSource=butch\n[Character.Gameplay]\nSourceActor=butch\n")}, messages).empty());
     CHECK(loadCustomFigures({mod("[Character]\nName=NoSource\nTemplate=AV_Buzz\n")}, messages).empty());

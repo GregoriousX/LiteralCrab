@@ -10,6 +10,9 @@ void prepareCustomCharacterGameplay(mods::AssetIndex& assets, const std::wstring
     std::vector<CustomFigure>& figures, std::vector<std::string>& messages);
 void addCustomGameplayPatches(mods::Index& index, const std::vector<CustomFigure>& figures);
 std::string customGameplayDnaPath(const CustomFigure& figure);
+// Chunk targets of the private DNA: its path, embedded identity and content
+// marker. "contains:" patches never see it, because it is a named chunk.
+std::vector<std::string> customGameplayDnaTargets(const CustomFigure& figure);
 std::string customGameplayDnaPatch(const CustomFigure& figure);
 std::string customRespawnBehaviorPatch();
 std::string customGameplayActorPatch(const std::vector<CustomFigure>& figures);

@@ -182,11 +182,17 @@ if type(gadgets) ~= "table" or type(gadgets.Avatar) ~= "table" or
     type(gadgets.Rider) ~= "table" or type(gadgets.Identification) ~= "table" then return end
 local name = gadgets.Identification.ActorTypeMask
 if not LiteralCrab.has("IsRegisteredAvatar") then return end
-if type(name) ~= "string" or not LiteralCrab.IsRegisteredAvatar(name) then
+-- Private custom figures are not in any play set's roster; the loader names
+-- their player actor types so they get the same hitching posts.
+local custom = type(options) == "table" and type(options.Custom) == "table" and options.Custom or {}
+local function known(value)
+    return type(value) == "string" and (custom[value] == true or LiteralCrab.IsRegisteredAvatar(value))
+end
+if not known(name) then
     -- Identification masks and actor creation keys differ for several families
     -- (AV_Perry vs PNF_Perry, AV_LoneRanger vs LR_LoneRanger, etc.).
     name = gadgets.Identification.Name
-    if type(name) ~= "string" or not LiteralCrab.IsRegisteredAvatar(name) then return end
+    if not known(name) then return end
 end
 -- Toy Box avatar DNA omits SummonMount. Keep the avatar's model/movement DNA
 -- and add only the native, lock-checked hitching-post definitions.

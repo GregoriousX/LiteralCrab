@@ -257,7 +257,7 @@ std::vector<CustomTool> loadCustomTools(const std::vector<mods::Mod>& mods,std::
         const auto fields=section(mod.path+L"/mod.ini");if(fields.empty()) continue;
         constexpr const char* known[]={"id","basetool","controlsource","characters","displayname","description","sourceactor","sourcedna","sourcescript",
             "model","icon","assetdirectory","weaponsource","projectileradius","projectilescale","projectilespeed","projectilelifetime","projectiledamage",
-            "preloadactors","preloadfiles","preloadincludes","equip","modelhandle","source","dna","dnascript"};
+            "preloadactors","preloadfiles","preloadincludes","equip","modelhandle","source","dna","dnascript","baserules"};
         for(const auto& [key,value]:fields) if(std::none_of(std::begin(known),std::end(known),[&](auto k){return key==k;}))
             throw std::runtime_error("unknown Tool key: "+key);
         if(tools.size()>=64) throw std::runtime_error("at most 64 custom tools");
@@ -283,6 +283,12 @@ std::vector<CustomTool> loadCustomTools(const std::vector<mods::Mod>& mods,std::
         const auto equip=get(fields,"equip");
         if(!equip.empty()&&equip!="0"&&equip!="1") throw std::runtime_error("Equip must be 0 or 1");
         t.equip=equip=="1";
+        // A granted tool belongs to its characters, like their own ITEM_<name>:
+        // the base tool's purchase (UP_...) and Toy Box worlds would otherwise
+        // leave it locked and uncreated in play sets. BaseRules=1 keeps them.
+        const auto rules=get(fields,"baserules");
+        if(!rules.empty()&&rules!="0"&&rules!="1") throw std::runtime_error("BaseRules must be 0 or 1");
+        t.table.personal=rules!="1";
         t.model=get(fields,"model");t.icon=get(fields,"icon");t.assetDirectory=get(fields,"assetdirectory");
         if((!t.model.empty()&&!path(t.model))||(!t.icon.empty()&&(!path(t.icon)||!lower(t.icon).starts_with("ui/")))) throw std::runtime_error("invalid Model/Icon resource path");
         if(!t.assetDirectory.empty()&&(!path(t.assetDirectory)||t.assetDirectory.front()=='.'||lower(t.assetDirectory)=="assets"||lower(t.assetDirectory).starts_with("assets/")))
@@ -542,8 +548,12 @@ void addCustomToolPatches(mods::Index& index,const std::vector<CustomTool>& tool
             index.addBuiltinPatch({to,assetId,"contains:"+assetId},"custom_tool_asset_"+t.table.id+"_"+from,privateAssetDnaPatch(t.assetAliases),"{}");
         }
     }
-    index.addBuiltinPatch({"common_actors.lua","rumpusroom_actors.lua","toystoryinspace_actors.lua","contains:ActorList"},"custom_tool_actors",customToolActorPatch(tools),"{}");
-    index.addBuiltinPatch({"coredatamap.lua","rumpusroomdatamap.lua","toystoryinspacedatamap.lua","contains:DataMap =","contains:AnimTreeProject"},"custom_tool_dependencies",customToolDependenciesPatch(tools),"{}");
+    // Every play set's named list, like the source tool rows themselves.
+    index.addBuiltinPatch({"common_actors.lua","cars_actors.lua","incredibles_actors.lua","monstersu_actors.lua","pirates_actors.lua",
+        "loneranger_actors.lua","toystoryinspace_actors.lua","rumpusroom_actors.lua","contains:ActorList"},"custom_tool_actors",customToolActorPatch(tools),"{}");
+    index.addBuiltinPatch({"coredatamap.lua","carsdatamap.lua","incrediblesdatamap.lua","monstersudatamap.lua","piratesdatamap.lua",
+        "lonerangerdatamap.lua","toystoryinspacedatamap.lua","rumpusroomdatamap.lua","contains:DataMap =","contains:AnimTreeProject"},
+        "custom_tool_dependencies",customToolDependenciesPatch(tools),"{}");
     index.addBuiltinPatch({"weapons.lua","var/weapons/weapons.lua","contains:projectileChoName"},"custom_tool_weapons",customToolWeaponPatch(tools),"{}");
     index.addBuiltinPatch({"presentation/toolselect.lua"},"custom_tool_icons",customToolIconPatch(tools),"{}");
 }

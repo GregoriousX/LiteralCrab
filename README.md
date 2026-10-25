@@ -27,7 +27,8 @@ Every option outside the display fixes is **off by default**. With the default s
 - Script mods: replace or patch the game's Lua scripts without editing game files.
 - Asset mods: replace models, textures, sounds and other files with loose files or ordinary ZIPs. The game's archives are never rebuilt.
 - Verified engine adapters and features for mods, such as awarding tools, placing power discs or restoring console Toy Box Hub menus.
-- Custom portal characters and tools: a character needs a name and a native source actor (NPCs and cut avatars included); its player body, inventory, equipment and animations are prepared privately from the game's own data.
+- Custom portal characters and tools: a character needs a name and a native source actor (NPCs, mission givers and cut avatars included) or its own model; its player body, inventory, equipment and animations are prepared privately from the game's own data, with interaction animations taken from the nearest matching stock rig.
+- Optional gameplay audio for custom characters and tools from loose Ogg Vorbis/WAV files, with effects, occasional barks and private actor-message triggers, positioned in 3D like native sounds; cutscene audio stays native. See the modding guide for the current testing scope.
 
 See the [modding guide](di1/MODDING.md).
 
@@ -64,6 +65,18 @@ Some options work through the mod loader and need `[Mods] Enabled=1` (the defaul
 ## Compatibility
 
 LiteralCrab supports the verified Disney Infinity 1.0 Gold Edition PC executable. Every hook and patch checks the game's code first; on another build the plugin refuses to start, and a feature whose code differs is left out and logged in `LiteralCrab.log`. Not all gameplay scenarios or display setups have been tested.
+
+### Steam Deck / Proton: invisible custom models
+
+If a custom character appears in the virtual reader but its model or a custom tool's model is invisible in gameplay, add `PROTON_USE_WINED3D=1` to the game's Steam launch options. This workaround restored both Zurg and his blaster models in a reported Steam Deck test. With no existing launch options, use:
+
+```text
+PROTON_USE_WINED3D=1 %command%
+```
+
+If you already have launch options, add the variable before the existing command and preserve the other settings, including any `WINEDLLOVERRIDES` used by the ASI loader. This selects Proton's OpenGL renderer instead of DXVK; see [Proton's runtime options](https://github.com/ValveSoftware/Proton#runtime-config-options). Remove the added variable to revert the renderer change.
+
+**PL:** Jeśli własna postać pojawia się w wirtualnym czytniku, ale jej model lub model własnego narzędzia jest niewidoczny podczas rozgrywki, dodaj `PROTON_USE_WINED3D=1` do opcji uruchamiania gry w Steam. To obejście przywróciło modele Zurga i jego blastera w zgłoszonym teście na Steam Decku. Przy pustych opcjach użyj komendy powyżej. Jeśli masz już opcje uruchamiania, dopisz zmienną przed obecną komendą i zachowaj pozostałe ustawienia, w tym `WINEDLLOVERRIDES` używane przez loader ASI. Zmienna wybiera renderer OpenGL Protona zamiast DXVK; jej usunięcie cofa tę zmianę.
 
 ## Build from source
 

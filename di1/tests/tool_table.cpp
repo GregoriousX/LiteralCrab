@@ -146,6 +146,12 @@ void appendAndInheritance() {
     auto second = definition(); second.id += "2"; second.actor += "2";
     Parsed multiple(extendToolTable(raw, {definition(), second}));
     CHECK(multiple.profile(0) == std::vector<unsigned>({0, 1, 4, 5, 6, 2, 3}));
+    // A personal tool, like ITEM_BUZZ, drops only the base's upgrade (+0C) and
+    // zone list (+10); every other inherited field stays the base tool's.
+    auto personal = isolated; personal.personal = true;
+    Parsed own(extendToolTable(raw, {personal})); preserved(before, own, {});
+    CHECK(own.tool(5, 3) == none && own.tool(5, 4) == none);
+    for (unsigned field = 1; field < 19; ++field) if (field != 3 && field != 4 && field != 5) CHECK(own.tool(5, field) == fitted.tool(5, field));
     CHECK(extendToolTable(raw, {}) == raw);
     // Native actor variants can share descriptor names/hashes; the base tool's
     // explicit actor index identifies the right attachment variant.

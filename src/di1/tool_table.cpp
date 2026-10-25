@@ -157,6 +157,8 @@ struct Table {
         if (!definition.modelHandle.empty()) actor[4]=addText(definition.modelHandle);
         tool[0] = addText(definition.id); tool[1] = nativeToolHash(definition.id);
         tool[5] = tool[0]; // Native presentation/dictionary item identifier.
+        // GetTool checks the upgrade named by +0C, then the zone list at +10.
+        if (definition.personal) tool[3] = tool[4] = none;
         tool[6] = addList({checkedSize(actors.size())});
         const auto index = checkedSize(tools.size());
         actors.push_back(actor); tools.push_back(tool);

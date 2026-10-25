@@ -141,6 +141,9 @@ end
         DWORD read{};
         if (!ReadFile(file.get(), source.data(), static_cast<DWORD>(source.size()), &read, nullptr) || read != source.size())
             throw std::runtime_error("cannot read " + utf8(relative));
+        // Editors commonly save UTF-8 with a BOM, which Lua 5.1 rejects.
+        if (source.starts_with("\xEF\xBB\xBF")) source.erase(0, 3);
+        if (source.empty()) throw std::runtime_error("script size must be 1 byte to 4 MiB: " + utf8(relative));
         // Source text only: precompiled chunks bypass the Lua verifier.
         if (source[0] == '\x1b' || source.find('\0') != std::string::npos)
             throw std::runtime_error("script must be Lua source text, not bytecode: " + utf8(relative));

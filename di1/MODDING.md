@@ -105,6 +105,7 @@ Each step uses verified native data and can be overridden with the setting in br
 | --- | --- |
 | Source DNA | The actor row's `DNAFile` (`SourceDNA`). A `.dnax` path works for actors without a row. |
 | Player body | A source DNA with the avatar gadget, controller mapping, tool manager and `characters/Avatar.btx` tree is used as is. Otherwise (NPCs, bosses) the template's player DNA is used and only the source's model, explosion pieces, name, dialog ID and scale are copied onto it (`Body=source|template`). |
+| Biped check | A source converts automatically when its DNA uses the player `Biped` or `BipedNPC` animation tree, or when its model has the stock biped skeleton (see [joint names](#required-skeleton--wymagany-szkielet)), whatever tree its DNA names. Mission givers such as Tia Dalma, and authored models, pass through the skeleton. Cars, robots and animals do not. |
 | Template | A stock playable biped supplying the player body, animations and basic inventory: `Template`, else a biped `BaseCharacter`, else the stock biped whose model shares the most animation files with the source model, else `AV_Buzz`. |
 | Actor type | The avatar controller drives only `PlayerControllable` actor types. A source type outside that filter (for example the undefined `AV_Ferb`) becomes the template's type on the private copy. |
 | Inventory | Native tool profiles are keyed by the DNA's `ActorTypeMask`. A source with a complete player profile (`ITEM_NONE`, `PROP_NONE`, `ABILITY_NONE`) keeps it. A source without one, or with an NPC profile, gets the template's profile without the template's own starting Item and Ability (`InventorySource`, `InventoryExclude`). Declared tools missing from both profiles are added. |
@@ -112,12 +113,13 @@ Each step uses verified native data and can be overridden with the setting in br
 | NPC tools | An Items tool without player control contexts (a boss weapon) borrows `ITEM_BLASTER`'s controls, targeting and HUD hints (`ItemControlSource`). |
 | Weapon clone | Any `ItemProjectile...` value clones the item's gun privately. Its tool DNA, script and gun are read from the item's tool actor (`ItemToolDNA`, `ItemToolScript`, `ItemWeaponSource`). Shipped projectile model and effect choreographies are preloaded. |
 | Rows and dependencies | The source's Avatar actor and dependency rows are cloned. A source without one (cut avatars, NPCs) clones the template's rows with its model and pieces entries replaced, and drops the template's `modelDef`. The shared `biped_avatar` include and the actors of declared tools are added (`PreloadActors`, `PreloadIncludes`, `PreloadFiles`). |
-| Player model | The avatar tree plays named animation sets that player entities define. A player entity missing some of the template's sets is completed with them; an entity without player sets, or a mesh without any entity, is bound to the template's whole animation entity (`Animations=source|complete|template`). |
+| Player model | The avatar tree plays named animation sets that player entities define. A player entity with the template's playback channels is completed with the sets it lacks and with the template's shared interaction aliases (bike, ship, rowboat, mounts, vehicles, boards and LiteralCrab's `LCRM_` poses), as served with any enabled animation provider. Its own mappings are never changed. An entity without player sets, a shipped entity with different channels (such as a mission giver's), or a mesh without any entity is bound to the template's whole animation entity (`Animations=source|complete|template`). |
+| Mounts | With `CharactersInAnyPlayset=1`, the private player type gets the same native, lock-checked hitching-post mounts and vehicles (horses, MU bicycles, cars, helicopter) as visiting stock figures. |
 | Identity | `Gateway`/`Actor` default to `LCR_<Name>`, `SkuId` to a stable value derived from `Name`, `DisplayName` to `Name`, `Icon` to the generic `ui/charactericons/blankavatar`, and `BaseCharacter` to the template. |
 
-The generated player model is a private BENT entity that keeps the source mesh, materials and textures and borrows the template's channels, layout and animation sets. Every file it references is served lazily from the player's own game archives under `characters/literalcrab/assets/<SkuId>/...`, with private texture keys. Stock entities, actor rows, profiles, tools and the source NPC are never changed. A model you supply in `AssetDirectory` at the same logical path replaces the generated one. Shared animation sets are not retargeting: a rig with different proportions plays the template's motions as they are.
+The generated player model is a private BENT entity that keeps the source mesh, materials and textures and borrows the template's channels, layout and animation sets. Every file it references is served lazily from the player's own game archives under `characters/literalcrab/assets/<SkuId>/...`, with private texture keys. Stock entities, actor rows, profiles, tools and the source NPC are never changed. An entity (`.bent`) you supply in `AssetDirectory` at the model's logical path is used instead of the generated one. A mesh you supply without an entity is bound to the template's animation sets like a shipped mesh. Shared animation sets are not retargeting: a rig with different proportions plays the template's motions as they are.
 
-PL: Każdy krok korzysta ze zweryfikowanych danych gry i można go nadpisać ustawieniem w nawiasie. Niejednoznaczne przypadki kończą się błędem z nazwą ustawienia do dodania; odrzucona postać nigdy nie jest rejestrowana częściowo. Źródło nie będące awatarem gracza otrzymuje ciało gracza z szablonu i tylko własny model, części, nazwę, dialog i skalę. Szablon to `Template`, dwunożny `BaseCharacter`, awatar o najbardziej zgodnych animacjach albo `AV_Buzz`. Typ aktora spoza `PlayerControllable` (np. nieistniejący `AV_Ferb`) zostaje zastąpiony typem szablonu. Profile narzędzi są przypisane do `ActorTypeMask`; brakujący lub NPC-owy profil zastępuje podstawowy ekwipunek szablonu bez jego osobistego Item i Ability. Puste sloty startowe wypełnia własne narzędzie źródła albo standardowy atak szablonu; nieistniejące narzędzia (np. `ITEM_FERB`) są usuwane. Broń NPC otrzymuje sterowanie `ITEM_BLASTER`. Wartości `ItemProjectile...` klonują broń razem z wykrytym DNA, skryptem i efektami. Brak wiersza aktora oznacza klon wiersza szablonu z podmienionym modelem. Model gracza to prywatny BENT z siatką źródła i zestawami animacji szablonu, serwowany z własnych archiwów gracza; oryginalne zasoby, wiersze i profile pozostają niezmienione. Wspólne animacje nie są retargetowaniem.
+PL: Każdy krok korzysta ze zweryfikowanych danych gry i można go nadpisać ustawieniem w nawiasie. Encja gracza z kanałami szablonu dostaje brakujące zestawy oraz wspólne aliasy interakcji szablonu (rower, statek, łódka, wierzchowce, pojazdy, deski i pozy `LCRM_`), także z włączonego dostawcy animacji; encja z innymi kanałami (np. zleceniodawcy) otrzymuje całą encję animacji szablonu. Z `CharactersInAnyPlayset=1` postacie własne korzystają ze słupków przywoływania wierzchowców i pojazdów jak postacie z gry. Niejednoznaczne przypadki kończą się błędem z nazwą ustawienia do dodania; odrzucona postać nigdy nie jest rejestrowana częściowo. Źródło nie będące awatarem gracza otrzymuje ciało gracza z szablonu i tylko własny model, części, nazwę, dialog i skalę. Szablon to `Template`, dwunożny `BaseCharacter`, awatar o najbardziej zgodnych animacjach albo `AV_Buzz`. Typ aktora spoza `PlayerControllable` (np. nieistniejący `AV_Ferb`) zostaje zastąpiony typem szablonu. Profile narzędzi są przypisane do `ActorTypeMask`; brakujący lub NPC-owy profil zastępuje podstawowy ekwipunek szablonu bez jego osobistego Item i Ability. Puste sloty startowe wypełnia własne narzędzie źródła albo standardowy atak szablonu; nieistniejące narzędzia (np. `ITEM_FERB`) są usuwane. Broń NPC otrzymuje sterowanie `ITEM_BLASTER`. Wartości `ItemProjectile...` klonują broń razem z wykrytym DNA, skryptem i efektami. Brak wiersza aktora oznacza klon wiersza szablonu z podmienionym modelem. Model gracza to prywatny BENT z siatką źródła i zestawami animacji szablonu, serwowany z własnych archiwów gracza; oryginalne zasoby, wiersze i profile pozostają niezmienione. Wspólne animacje nie są retargetowaniem.
 
 ### Examples / Przykłady
 
@@ -182,7 +184,21 @@ DNA = {
 Remove = { "AgentGadgets.DynamicExploder.dynexp_pieceFile" }
 ```
 
+**F. A mission giver: Tia Dalma.** `pir_tia_dalma` uses the reduced `MissionGiver` animation tree and has no avatar gadgets, tool profile or Avatar row, but her model has the full biped skeleton (all of her joints exist in Jack Sparrow's and Barbossa's rigs). The quick-start form is enough; choose a template whose build suits her:
+
+```ini
+[Character]
+Name=LiteralCrab_TiaDalma
+Source=pir_tia_dalma
+Template=PIR_Barbossa
+DisplayName=Tia Dalma
+```
+
+The log reports `its model has the biped skeleton`. Her mission-giver entity uses different playback channels, so her mesh is bound to the template's whole animation entity (`player entity channels differ ... the template's animation entity is used`).
+
 Tables merge by key; a list (such as an offset) and any plain value replace the native value. The file may only assign `DNA` and `Remove`, using literals and table constructors. Calls, expressions and other globals are rejected at startup with the line's reason. For logic, `DNAScript=` names an ordinary Lua script that runs on the private DNA after the overlay, with the same arguments and library functions as a [patch](#patches).
+
+PL: F — Tia Dalma używa okrojonego drzewa animacji `MissionGiver` i nie ma gadżetów awatara, profilu narzędzi ani wiersza Avatar, ale jej model ma pełny szkielet bipeda. Wystarczy manifest z szybkiego startu (najlepiej z `Template=PIR_Barbossa`); log potwierdza `its model has the biped skeleton`.
 
 PL: A — Ferb ma pełne DNA gracza, ale w grze brakuje profilu `AV_Ferb`, narzędzi `ITEM_FERB`/`PROP_FERB`, wiersza aktora i zależności, typu `AV_Ferb` oraz animowanej encji (jest sama siatka). Loader uzupełnia wszystkie braki; szablonem jest Phineas. B — Butch to przeciwnik z AI Cowboy, drzewem BipedNPC, profilem z bronią wrogów i encją bez zestawów animacji gracza; wystarczy manifest z szybkiego startu. C — każde natywne narzędzie może być wyposażeniem startowym; trafia do prywatnego ekwipunku, a broń NPC dostaje sterowanie gracza. D — osobna broń z natywnego szablonu. E — `DNA=` wskazuje czytelną tabelę Lua (tylko dane), scalaną z prywatnym DNA; `Remove` usuwa ścieżki. Tabele scalają się po kluczach, listy i wartości zastępują oryginał. `DNAScript=` uruchamia zwykły skrypt Lua na prywatnym DNA, jak patch.
 
@@ -257,6 +273,8 @@ PL: Wcześniej Zurg wymagał ręcznego wskazania każdego rekordu natywnego. Ter
 | `Source` | Native actor row name, or a relative `.dnax` path. Enables gameplay. / Natywny aktor albo ścieżka `.dnax`; włącza rozgrywkę. |
 | `Template` | Stock playable biped for the body, animations and basic inventory: `AV_Buzz`, `AV_Woody`, `AV_Jessie`, `LR_LoneRanger`, `LR_Tonto`, `PIR_JackSparrow`, `PIR_Barbossa`, `PIR_DavyJones`, `AV_MrIncredible`, `AV_ElastiGirl`, `AV_Dash`, `AV_Violet`, `AV_Syndrome`, `MU_Sully`, `MU_Mike`, `MU_Randall`, `TB_MickeyMouse`, `NBC_JackSkellington`, `TAN_Rapunzel`, `FRO_Anna`, `FRO_Elsa`, `WR_Ralph`, `WR_Vanellope`, `PNF_Perry`, `PNF_Phineas`. / Szablon ciała, animacji i ekwipunku. |
 | `Body` | `auto` (default), `source` or `template`. / Źródło ciała gracza. |
+| `AnimationTemplate` | Stock figure (same list as `Template`) whose whole animation entity drives the character, independently of the body, inventory and standard attack from `Template`. For example, `Template=AV_Buzz` with `AnimationTemplate=AV_MrIncredible`. / Postać, od której pochodzą wszystkie animacje, niezależnie od ciała i ekwipunku z `Template`. |
+| `AnimationDonors` | Comma-separated `Group:StockFigure` overrides for shared interactions, for example `Ship:PIR_DavyJones,Bike:MU_Mike`. Groups: `Ship`, `Bike`, `Rowboat`, `RideHorse`, `CarRide`, `VehicleDrive`, `VehicleDrive_SML`, `Hoverboard`, `JetPack_Glide`, `Booster`. / Dawcy animacji poszczególnych interakcji. |
 | `Animations` | `auto` (default), `source`, `complete` or `template`. / Źródło zestawów animacji. |
 | `DNA`, `DNAScript` | Mod-relative Lua overlay (data only, up to 1 MiB) and script (up to 4 MiB) for the private DNA. / Nakładka i skrypt Lua dla prywatnego DNA. |
 | `DisplayName`, `Description` | Printable ASCII text. / Tekst w drukowalnym ASCII. |
@@ -265,6 +283,10 @@ PL: Wcześniej Zurg wymagał ręcznego wskazania każdego rekordu natywnego. Ter
 | `Gateway`, `Actor` | Private names, equal ignoring case and starting with `LCR_`; default `LCR_<Name>`. / Prywatne nazwy `LCR_`. |
 | `BaseCharacter` | Stock figure for portal presentation defaults; default is the template (`AV_Buzz` without gameplay). / Domyślne pola prezentacji. |
 | `Playset`, `AssetDirectory` | As before; see private resources below. / Jak wcześniej. |
+
+**Interaction animations by rig.** All shipped player entities share one channel layout, so any stock figure can supply any interaction. Interaction clips bind through `characters/biped/biped.ct` by channel and are not retargeted. They therefore look right on a rig whose joints rest where the donor's do. When the animation figure does not ship an interaction itself, LiteralCrab compares the bind pose of the character's mesh with every stock figure that ships it, and uses the nearest one. The comparison averages the offsets of head, neck, spine, clavicles, shoulders, elbows, hands, knees, ankles and feet, scaled to head height. No figure further than 1.0 is used. Only some interactions have distinct clip sets: ship steering (the shared human set, or Davy Jones's own) and the MU bicycle (Mike's, Sulley's or Randall's). Sulley's bicycle is nearest for every human rig, while Randall's four-armed rig fits no other figure. The log names every choice, for example `Mech:Ship animations from PIR_DavyJones (nearest rig, offset 0.059)`. A Template-mode entity takes the donor's whole group. An author's or shipped entity keeps its own entries and only gains the missing ones from the donor.
+
+PL: Wszystkie encje graczy mają ten sam układ kanałów, a klipy interakcji wiążą się przez `biped.ct` bez retargetingu, więc pasują do rigów o podobnej pozie spoczynkowej. Gdy postać od animacji nie ma danej interakcji, LiteralCrab porównuje pozę spoczynkową siatki postaci z każdą postacią z gry, która tę interakcję ma, i wybiera najbliższą (średnie przesunięcie głównych stawów; powyżej 1,0 brak dawcy). Różne zestawy klipów mają tylko ster statku (wspólny albo Davy'ego Jonesa) i rower MU (Mike, Sulley, Randall). Rower Sulleya jest najbliższy każdemu ludzkiemu rigowi, a czterorękiego Randalla nie pasuje do nikogo. Każdy wybór jest zapisany w logu.
 
 Unknown `[Character]` keys are logged and ignored. At most 64 extra figures are supported; do not enable two mods with the same `SkuId`, `Name` or `Gateway`.
 
@@ -317,6 +339,89 @@ The directory must be nonempty, with at most 4096 loose files and 512 MiB. Trave
 `Icon` names a native `ui/...` single-texture MTB bundle, with its DDS texture in a `.tbody` resource. A PNG alone is not a game icon: author the native bundle/texture first. A private icon belongs under the same `AssetDirectory`, for example `ui/icons/my_zurg.mtb` and `textures/<hash>.tbody`, with `Icon=ui/icons/my_zurg`. The loader fits alpha bounds and proportions to the portal's normal/selected 512×512 and small 256×256 portraits. See the [character reference](README.md) for supported DDS formats and explicit portrait overrides.
 
 PL: `AssetDirectory` służy zasobom jednej postaci. To względny folder moda poza globalnym `assets`. Zachowaj logiczne ścieżki plików i używaj ich w manifeście. Loader tworzy prywatne ścieżki SKU i hashe tekstur; brakujące zasoby nadal korzystają z gry lub pozostałych modów. Zwykłe `assets/...` zastępuje zasoby globalnie. Folder musi być niepusty; limit to 4096 luźnych plików i 512 MiB. ZIP-y nie są rozpakowywane. Modele, rig i animacje wymagają zgodnych formatów PC oraz zachowanych zależności względnych. `Icon` wskazuje natywny pakiet MTB i jego teksturę DDS w `.tbody`; sam PNG nie wystarczy.
+
+### Characters not in the game / Postacie spoza gry
+
+A character does not have to exist in the game's files. You supply its DNA, mesh, materials and textures in `AssetDirectory`. The loader then gives it the template's player body, actor rows, inventory and animation sets, exactly as for an NPC. Nothing in the game's archives is replaced.
+
+**1. Folder layout.** Choose a lowercase name that no shipped file uses (here `lcr_myhero`). Paths below the asset folder are the logical paths the manifest and DNA use:
+
+```text
+mods/myhero/
+  mod.ini
+  character-assets/
+    characters/lcr_myhero.dnax          text DNA (step 2)
+    characters/lcr_myhero/lcr_myhero.oct mesh scene (step 3)
+    characters/lcr_myhero/lcr_myhero.mtb material bundle (step 4)
+    characters/lcr_myhero/<buffers>      every vertex/index buffer the .oct names
+    textures/<16 hex digits>.tbody       every texture the .mtb names (step 4)
+    characters/lcr_myhero/lcr_myhero.bent optional: your own animated entity (step 5)
+```
+
+```ini
+[Mod]
+Name=My hero
+Enabled=1
+
+[Character]
+Name=LiteralCrab_MyHero
+Source=characters/lcr_myhero.dnax
+AssetDirectory=character-assets
+Template=AV_ElastiGirl
+DisplayName=My Hero
+```
+
+**2. DNA.** A plain text Lua table is enough. Only the fields below are taken from it; the template provides everything else (health, controls, movement, collision, tools):
+
+```lua
+DNA = {
+    AgentGadgets = {
+        Identification = { ActorTypeMask = 'LCR_MyHero', Name = 'LCR_MyHero' },
+        EntityInstance = { ModelName = 'characters/lcr_myhero/lcr_myhero', RootNode = '' },
+    },
+}
+```
+
+`ModelName` is the mesh path without an extension. `RootNode` is `''` in every shipped DNA. Optional copied fields are `Identification.DialogID`, `Identification.LoadAudio`, `DynamicExploder.dynexp_piece...`/`dynexp_controlN` (explosion pieces; without them the zero-piece death is used) and `ActorScaleMedian`/`ActorScaleDeviation`. Any `ActorTypeMask` works: the private copy uses the template's player type. To change other properties (health, targeting offset) use a `DNA=` overlay, not this file. Save as UTF-8; a byte-order mark is accepted.
+
+**3. Mesh and skeleton.** The mesh must be a native PC OCT scene (format 1.1). The loader does not convert FBX, OBJ, glTF or console files. All files the scene names (vertex/index buffers, material bundle) must sit beside it under the same names. The template's animation clips drive the mesh **by joint name**:
+
+<a id="required-skeleton--wymagany-szkielet"></a>
+**Required skeleton / Wymagany szkielet.** These twelve joints must exist with exactly these names. Without them the model is rejected for automatic conversion:
+
+`Cntrl_Hips`, `Cntrl_Head`, `Cntrl_Clavicle_Left`, `Cntrl_Clavicle_Right`, `Cntrl_Elbow_Left`, `Cntrl_Elbow_Right`, `Cntrl_Hand_Left`, `Cntrl_Hand_Right`, `Cntrl_Knee_Left`, `Cntrl_Knee_Right`, `Cntrl_Ankle_Left`, `Cntrl_Ankle_Right`.
+
+They are the minimum, not the whole rig. For correct motion, build your skeleton from the template's own rig: same joint names, hierarchy, rest orientation and roughly the same proportions. Template rigs have about 120–150 `Cntrl_*` joints, including spine, fingers, face and the `_Grp` parents. Joints your mesh lacks are ignored by the animations. Extra joints of yours stay in their bind pose. Motions are not retargeted, so a much taller or shorter rig plays the template's poses with its own lengths (feet may slide or float). Pick the template closest in build (`Template=`), and check the attachment sockets as described below.
+
+**4. Materials and textures.** The `.mtb` must be a BNDL v1 bundle holding a TEXB v3 texture table and a MATP v2 material table. LiteralCrab checks the following before publishing anything, and logs `invalid private MATP v2 metadata` or a TEXB error otherwise:
+
+- every shader name is a non-empty printable ASCII name of a native shader (reuse the shader names of a shipped model with similar materials);
+- each material's shader index is lower than the shader count;
+- material names may be empty;
+- each texture listed in TEXB exists as `textures/<16 lowercase hex digits>.tbody` (the 8-byte texture key in hex) holding a supported DDS texture.
+
+Your texture keys are made private per character, so they never collide with shipped textures or other mods.
+
+**5. Animations.** Without your own `.bent`, the loader builds the entity from your mesh and the template's complete animation sets (log: `player entity built from <template>'s animation sets`). If you ship a `.bent` at `characters/lcr_myhero/lcr_myhero.bent` with `Core:BaseMobility` and the template's playback channels (copy the template's `Channels` block), the loader adds the template's missing sets and shared interaction aliases. Your own mappings stay untouched (log: `player entity completed with ...`, `gained N shared interaction alias(es)`). An entity with different channels is used exactly as supplied and must then define every set the avatar tree plays. Leave it out unless you need your own clips.
+
+**6. Check the log.** A ready character logs, in order: `Custom assets ...: N file(s) mounted privately`, `its model has the biped skeleton` (when the DNA names no biped tree), `player entity built ...` and `native loadout validated; private source DNA prepared`. Then follow [Testing](#testing-and-current-coverage--testowanie-i-obecny-zakres).
+
+| Log message | Cause and fix |
+| --- | --- |
+| `source DNA is not plain data` | The DNA contains code (calls, expressions, locals). Keep it a literal table. |
+| `neither a player avatar nor a humanoid with the biped skeleton` | One of the twelve joints is missing or misnamed in the `.oct`. |
+| `a non-biped source needs its own Avatar actor row` | `Body=source` on a model without the biped skeleton. Use the default `Body`. |
+| `N file(s) referenced by the player entity are missing` | A file named by the mesh or entity is absent from the asset folder. |
+| `invalid private MATP v2 metadata` | The material table breaks a rule in step 4. |
+| `private texture filename must contain its 16-digit hash` | A `.tbody` name is not 16 hex digits. |
+
+PL: Postać nie musi istnieć w plikach gry. W `AssetDirectory` dostarczasz DNA, siatkę, materiały i tekstury, a loader nadaje jej ciało gracza, wiersze aktora, ekwipunek i zestawy animacji szablonu, tak jak dla NPC. Archiwa gry nie są zmieniane.
+1. Układ: unikalna nazwa małymi literami; ścieżki pod folderem zasobów są logicznymi ścieżkami z manifestu i DNA (przykład wyżej).
+2. DNA: zwykła tekstowa tabela Lua z `ActorTypeMask`, `Name`, `ModelName` (ścieżka siatki bez rozszerzenia) i `RootNode=''`. Opcjonalnie `DialogID`, `LoadAudio`, części `DynamicExploder` i `ActorScale...`. Resztę daje szablon, a inne właściwości zmieniasz nakładką `DNA=`. Kodowanie UTF-8; BOM jest akceptowany.
+3. Siatka: natywna scena OCT dla PC (loader nie konwertuje FBX/OBJ/glTF ani plików z konsol), a obok niej wszystkie bufory i pakiet materiałów pod nazwami, które wskazuje scena. Animacje szablonu sterują siatką po nazwach stawów. Wymagane są dokładnie te stawy: `Cntrl_Hips`, `Cntrl_Head`, `Cntrl_Clavicle_Left/Right`, `Cntrl_Elbow_Left/Right`, `Cntrl_Hand_Left/Right`, `Cntrl_Knee_Left/Right`, `Cntrl_Ankle_Left/Right`. To minimum: szkielet najlepiej zbudować z rigu szablonu (nazwy, hierarchia, orientacja spoczynkowa i zbliżone proporcje; około 120–150 stawów `Cntrl_*`). Brakujące stawy animacje pomijają, dodatkowe zostają w pozie spoczynkowej. Animacje nie są retargetowane.
+4. Materiały: pakiet BNDL v1 z tabelą TEXB v3 i MATP v2. Nazwy shaderów muszą być niepuste i natywne, indeks shadera materiału musi być mniejszy od liczby shaderów, nazwy materiałów mogą być puste, a każda tekstura to `textures/<16 cyfr hex>.tbody` z obsługiwanym DDS. Klucze tekstur stają się prywatne dla postaci.
+5. Animacje: bez własnego `.bent` loader buduje encję z Twojej siatki i zestawów animacji szablonu. Własny `.bent` z `Core:BaseMobility` i kanałami szablonu (skopiuj blok `Channels` szablonu) jest uzupełniany o brakujące zestawy i wspólne aliasy interakcji szablonu, a Twoje mapowania pozostają nietknięte. `.bent` z innymi kanałami jest używany bez zmian i musi definiować wszystkie zestawy gracza. Pomiń go, jeśli nie potrzebujesz własnych klipów.
+6. Sprawdź log według tabeli powyżej, a potem przetestuj postać w grze.
 
 ### Respawn and attachment fit / Odradzanie i dopasowanie mocowań
 
@@ -387,6 +492,7 @@ The model/icon paths require a compatible native bundle in the mod; the manifest
 | `BaseTool` | Optional player tool whose controls, attachment, selection, world and upgrade rules the new row inherits; default `Source`, or `ITEM_BLASTER` for an NPC-only item. Without `Source`, the base tool is also copied. / Baza reguł narzędzia. |
 | `ControlSource` | Optional same-group targeting, control-context and HUD donor. / Sterowanie innej pozycji z tej samej grupy. |
 | `Equip` | `0` by default; `1` makes this the starting tool in its group, in memory. A second tool cannot claim the same slot. / Wyposażenie początkowe. |
+| `BaseRules` | `0` by default: the tool belongs to its characters like their own `ITEM_<name>`, so it needs no purchase/upgrade and works in every play set. `1` keeps the base tool's upgrade (for example `UP_Blaster`) and Toy Box world list. / Domyślnie narzędzie należy do postaci jak jej własny przedmiot (bez zakupu, w każdym playsecie); `1` zachowuje ulepszenie i strefy narzędzia bazowego. |
 | `SourceActor`, `SourceDNA`, `SourceScript`, `WeaponSource` | Explicit tool actor, its DNA, native PC SLNG script and gun; inferred from `Source` when omitted. / Jawne źródła; domyślnie z `Source`. |
 | `Model`, `ModelHandle` | Optional extensionless Entity path replacing the DNA's model, and the attachment control it exports. / Model i uchwyt. |
 | `Icon` | Optional native `ui/...` MTB/TEXB icon; default the base tool's icon. / Ikona. |
@@ -402,6 +508,156 @@ Private resources mount under `characters/literalcrab/assets/tools/<lowercase Id
 Private MTB files use native BNDL v1 / TEXB v3. MATP v2 metadata is checked before mounting: string tables, repeated material count and shader indices must be in bounds. The loader preserves the shader identities and opaque parameter blocks; those shaders must already exist in the game. Material authors must use the native grouped arrays and distinct material cache keys. These checks do not validate shader-specific parameter lengths or convert foreign shaders.
 
 PL: Pola `Projectile...` mają zakresy odpowiednich `ItemProjectile...`. Natywny warunek odblokowania bazy nadal obowiązuje. Zasoby, tekstury, aktor, skrypt i pocisk mają prywatne nazwy. Nowy wpis trafia tylko do wskazanych prywatnych ekwipunków. `Equip=1` zmienia slot początkowy w pamięci; plik postaci pozostaje zachowany. Błędna deklaracja nie publikuje części narzędzia, a konflikty rekordów blokują powiązane figurki. Prywatne MTB wymagają BNDL v1 / TEXB v3; metadane MATP v2 są sprawdzane przed montowaniem, a shadery muszą istnieć w grze.
+
+## Gameplay audio for custom characters and tools / Dźwięki customowych postaci i narzędzi
+
+Optional audio sections add effects and short character barks to a prepared private
+character or tool. Put ordinary **Ogg Vorbis (`.ogg`) or WAV (`.wav`) files** inside
+that mod; there is no bank-building step. Ogg Opus is not supported by the game's
+FMOD version. Restart after changing the manifest or files.
+
+```ini
+[Character.Audio]
+Land=audio/land.ogg
+Respawn=audio/recover.wav
+Volume=0.8
+
+[Character.Voice]
+Spawn=audio/hello.ogg
+Idle=audio/quip_a.ogg,audio/quip_b.ogg
+IdleInterval=45
+Cooldown=20
+Chance=0.35
+Spawn.Chance=1
+
+[Tool.Audio]
+Fire=audio/fire.wav
+Equip=audio/equip.ogg
+Fire.Cooldown=0.12
+```
+
+These sections belong in the same `mod.ini` as their `[Character]` or `[Tool]`.
+`[Tool.Voice]` is available for tool-triggered barks too. Files are relative to the
+mod folder, outside `AssetDirectory`. A comma-separated list chooses a random
+variant and avoids an immediate repeat when more than one is available.
+
+| Trigger | Meaning |
+| --- | --- |
+| Character `Spawn` | Once when this private local-player actor becomes available in gameplay. |
+| Character `Idle` | Periodic gameplay bark, after `IdleInterval` seconds; it is an ambient timer, not a test that the character is standing still. |
+| Character `Land` / `Respawn` | Native `CollisionLanded` / `DynamicExploderReassembled` actor message. |
+| Tool `Fire` | Native `ShootGun` request on this tool, not confirmation that a projectile hit or dealt damage. |
+| Tool `Equip` / `Spawn` / `Unequip` | Native `Activate` / `Activate` / `Deactivate` message on this tool. |
+| Other names | Exact, case-sensitive native actor messages. They must exist and be emitted on the particular actor; animation names are not automatically actor messages. |
+
+`Volume` and `Chance` are `0..1`; `Cooldown` is `0..3600` seconds. Effects default
+to volume/chance `1` and cooldown `0.08`; voice sections default to cooldown `15`.
+`IdleInterval` is `1..3600` seconds, default `30`, and applies to characters only.
+`<trigger>.Volume`, `.Chance` and `.Cooldown` override a single cue. A failed chance
+roll consumes its cooldown, so repeated fire or hit messages do not force a rare
+bark to play. Barks share their owner's voice cooldown and do not overlap another
+owned bark. A tool has no idle timer; use its activation/fire messages instead.
+
+Loose clips use the game's existing FMOD system and native `sfx` or `dialog`
+channel groups (3D effects use `sfx/sfx3d` when the loaded banks define it),
+respecting their volume and parent pause state. They are **3D** by default and
+follow the owning player's world position; a tool's clips follow the player who
+holds it. The game feeds FMOD raw world coordinates (camera listener, right-handed,
+scale 1), and the defaults copy the shipped FEV events: inverse rolloff with
+`MinDistance=5` for effects and `MinDistance=60` for voice, `MaxDistance=10000`.
+Within `MinDistance` a clip plays at full volume; beyond it, it fades as
+`MinDistance / distance`. `MinDistance` (`0.1..100000`), `MaxDistance`
+(`0.1..1000000`, not below the minimum) and `Spatial` (`1` or `0`) may be set for a
+whole section or one cue, e.g. `Fire.MinDistance=7`. `Spatial=0` plays a local
+2D clip. A clip also uses 2D if the player's position has never been readable.
+Native `event:` sounds retain their original spatial behavior.
+Actor-message cues use the game's existing message dispatcher when its verified
+profile is available; they do not require an existing Effects gadget on the actor.
+Swapping or removing the owner stops its
+clips. At most 16 loose clips play simultaneously; excess requests are dropped.
+
+**Cutscenes are excluded.** No cinematic, dialog-bank or global sound replacement
+is installed by these declarations. The native cutscene query blocks new custom
+audio and stops the loader's owned playback. Ordinary native sounds pass through
+unchanged. A paused mixer does not queue barks to play afterwards.
+
+### Existing native events / Istniejące zdarzenia audio
+
+A variant may be `event:<native sound event>` instead of a file. Use a sound-event
+name already recognized by the game, not the FSB filename or an arbitrary sample
+name. Native events retain their original bank category and spatial behavior.
+`Banks` adds native FEV dependencies to this private actor, for example:
+
+```ini
+[Character.Audio]
+Banks=Zurgbot_Melee.fev
+```
+
+The existing `Zurgbot_Melee.fev` references `zurgbot_melee_se.fsb`; the FSB alone
+does not define event triggers. A bank declaration only makes its events
+available: add a cue to play one. Native events are bounded to 16 owned handles,
+are stopped on a cutscene/owner change, and have a 30-second ceiling; this API is
+for gameplay effects and short barks, not music or cinematics.
+
+Advanced: `Replace.<native sound event>=audio/replacement.ogg` replaces that
+actor-owned event only for the matching custom figure or owned custom tool
+during gameplay. Without `Replace.`, cues are additions. An unmatched owner,
+ordinary actor or cutscene always retains the original call. Replacement
+cooldown/chance can intentionally leave a trigger silent. This route concerns
+the native actor-sound path; it does not intercept cinematic/dialog playback.
+
+PL: Własne pliki dźwiękowe są domyślnie odtwarzane w 3D w pozycji gracza w świecie
+(dźwięki narzędzia — w pozycji gracza, który je trzyma), tak jak natywne zdarzenia
+FEV: zanik odwrotny, `MinDistance=5` dla efektów, `60` dla kwestii, `MaxDistance=10000`.
+`MinDistance`, `MaxDistance` i `Spatial=0|1` można ustawić dla sekcji albo jednego
+zdarzenia (np. `Fire.MinDistance=7`); `Spatial=0` daje lokalne 2D. Natywne dźwięki
+`event:` zachowują własne pozycjonowanie. Zdarzenia aktora są obserwowane w sprawdzonej
+natywnej ścieżce komunikatów, bez wymagania istniejącego gadżetu Effects na postaci.
+
+Each effects/voice profile accepts 64 cues and each cue up to eight variants.
+Files are read once at startup and shared when repeated: 8 MiB per file and
+64 MiB of distinct clip data in total. Absolute paths, links/junctions, traversal,
+URLs, unknown file extensions and malformed declarations are rejected. Audio
+errors leave the character/tool itself available and log `Custom audio ...
+REJECTED`; a native-profile mismatch leaves its audio inactive. A valid file
+header is checked at startup; FMOD may still reject an unsupported/damaged
+encoding when first played.
+
+Validation: automated checks cover manifests, private DNA/dependency patches,
+variant/cooldown policy, native owner layouts, cutscene pass-through and channel
+lifetime. WAV and Ogg Vorbis decoding, native category routing and pause handling
+were also checked with the installed FMOD libraries using a silent output. These
+checks do not establish gameplay timing or audible quality; each intended
+character/tool and native message still needs a trial in the game.
+
+PL: Sekcje `[Character.Audio]`, `[Character.Voice]`, `[Tool.Audio]` i `[Tool.Voice]`
+odtwarzają zwykłe pliki WAV lub Ogg Vorbis z folderu moda, bez budowania banków.
+Lista po przecinku losuje wariant bez natychmiastowego powtórzenia. `Volume` i
+`Chance` mają zakres `0..1`, `Cooldown` — `0..3600` sekund; ustawienia pojedynczego
+zdarzenia mają postać `Fire.Cooldown=0.12`. Domyślny odstęp efektów to `0.08`, a
+kwestii `15` sekund. `IdleInterval` (`1..3600`, domyślnie `30`) uruchamia okresowe
+kwestie postaci podczas gry, również w ruchu; nie jest wykrywaniem bezczynnej
+animacji. Narzędzia korzystają z komunikatów aktywacji i strzału zamiast timera.
+
+PL: `Land` i `Respawn` oznaczają `CollisionLanded` i
+`DynamicExploderReassembled`; `Fire`, `Equip` i `Unequip` narzędzia oznaczają
+`ShootGun`, `Activate` i `Deactivate`. Pozostałe nazwy muszą być rzeczywistymi
+komunikatami danego aktora, z zachowaniem wielkości liter. `Fire` potwierdza
+żądanie strzału, a nie trafienie. Efekty i kwestie trafiają do natywnych kanałów
+`sfx`/`dialog` i respektują głośność/pauzę. Własne pliki są domyślnie przestrzenne
+(3D w pozycji gracza), a natywne zdarzenia zachowują oryginalne pozycjonowanie.
+Cutscenki zachowują oryginalny dźwięk, a własne klipy są wtedy blokowane i
+zatrzymywane. Zmiana postaci również zatrzymuje jej klipy; kwestie nie nakładają
+się na inne własne kwestie tego gracza.
+
+PL: `event:<zdarzenie>` używa istniejącego zdarzenia gry, a `Banks` dodaje jego
+zależność FEV, np. `Zurgbot_Melee.fev`. Sam FSB ani preload nie przypisuje efektu
+do akcji. Opcjonalne `Replace.<zdarzenie>` podmienia tylko dźwięk właściwego
+customowego aktora podczas gry. Limity to 64 wpisy na profil, osiem wariantów,
+8 MiB na plik i 64 MiB łącznie oraz 16 równoczesnych klipów. Banki natywne mają
+osobny limit 16 uchwytów i 30 sekund. Błędy audio nie wyłączają samej postaci ani
+narzędzia. Testy i próby z oryginalnym FMOD przechodzą; synchronizacja zdarzeń i
+odsłuch wymagają jeszcze osobnego testu w grze. Ogg Opus nie jest obsługiwany.
 
 ## Chunk names
 

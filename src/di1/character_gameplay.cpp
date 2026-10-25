@@ -574,17 +574,21 @@ end
 )lua";
 }
 
+std::vector<std::string> customGameplayDnaTargets(const CustomFigure& f) {
+    // The engine reports the source identity embedded in compiled DNA instead of its
+    // asset path. Content targets are only scanned for unnamed chunks.
+    return {customGameplayDnaPath(f), marker(f), "contains:" + marker(f)};
+}
+
 void addCustomGameplayPatches(mods::Index& index, const std::vector<CustomFigure>& figures) {
     bool any{};
     for (const auto& f : figures) if (f.gameplay.enabled()) {
         any = true;
-        const auto path = customGameplayDnaPath(f), identity = marker(f), content = "contains:" + identity;
-        // The engine reports the source identity embedded in compiled DNA instead of its
-        // asset path. Content targets are only scanned for unnamed chunks.
-        index.addBuiltinPatch({path, identity, content}, "custom_loadout_" + f.name, customGameplayDnaPatch(f), "{}");
+        const auto targets = customGameplayDnaTargets(f);
+        index.addBuiltinPatch({targets[0], targets[1], targets[2]}, "custom_loadout_" + f.name, customGameplayDnaPatch(f), "{}");
         // An author's DNAScript runs after the loader's changes, on the private copy only.
         if (!f.gameplay.dnaScriptSource.empty())
-            index.addBuiltinPatch({path, identity, content}, "custom_dna_script_" + f.name, f.gameplay.dnaScriptSource, "{}");
+            index.addBuiltinPatch({targets[0], targets[1], targets[2]}, "custom_dna_script_" + f.name, f.gameplay.dnaScriptSource, "{}");
         if(!f.gameplay.respawnBehavior.empty()) {
             const auto id="LiteralCrabRespawn:"+f.name;
             index.addBuiltinPatch({f.gameplay.respawnBehavior,id,"contains:"+id},
@@ -603,9 +607,13 @@ void addCustomGameplayPatches(mods::Index& index, const std::vector<CustomFigure
     if (!any) return;
     index.addBuiltinPatch({"weapons.lua","var/weapons/weapons.lua","contains:projectileChoName"},
         "custom_weapon_definitions",customWeaponDefinitionsPatch(figures),"{}");
-    index.addBuiltinPatch({"common_actors.lua", "rumpusroom_actors.lua", "toystoryinspace_actors.lua", "contains:ActorList"},
+    // Every play set's named list: a visiting figure or tool must also exist
+    // where its source row lives (the content markers only reach unnamed chunks).
+    index.addBuiltinPatch({"common_actors.lua", "cars_actors.lua", "incredibles_actors.lua", "monstersu_actors.lua",
+        "pirates_actors.lua", "loneranger_actors.lua", "toystoryinspace_actors.lua", "rumpusroom_actors.lua", "contains:ActorList"},
         "custom_gameplay_actors", customGameplayActorPatch(figures), "{}");
-    index.addBuiltinPatch({"coredatamap.lua", "rumpusroomdatamap.lua", "toystoryinspacedatamap.lua", "contains:DataMap =", "contains:AnimTreeProject"},
+    index.addBuiltinPatch({"coredatamap.lua", "carsdatamap.lua", "incrediblesdatamap.lua", "monstersudatamap.lua", "piratesdatamap.lua",
+        "lonerangerdatamap.lua", "toystoryinspacedatamap.lua", "rumpusroomdatamap.lua", "contains:DataMap =", "contains:AnimTreeProject"},
         "custom_gameplay_dependencies", customGameplayDependenciesPatch(figures), "{}");
 }
 }

@@ -48,6 +48,12 @@ struct CustomGameplay {
     std::string templateFigure;
     BodyMode body{BodyMode::Auto};
     AnimationMode animations{AnimationMode::Auto};
+    // Stock figure whose animation entity drives the player (default: the
+    // template), independent of the body/inventory template.
+    std::string animationTemplate;
+    // Per shared interaction group (Mech:Ship, ...) the stock figure supplying
+    // its animations; unset groups use the shipped rig nearest the character's.
+    std::vector<std::pair<std::string, std::string>> animationDonors;
     // Author Lua: a data-only DNA table merged into the private DNA, and an
     // optional script run on it afterwards (mod-relative paths).
     std::string dnaOverlay, dnaScript, dnaScriptSource;
@@ -92,6 +98,8 @@ std::uint32_t defaultFigureSku(std::string_view name);
 // Stock playable bipeds usable as body/animation/inventory templates.
 bool templateFigure(std::string_view gateway);
 const std::vector<std::string_view>& templateFigures();
+// "Ship" or "Mech:Ship" -> "Mech:Ship" for shared interaction groups; empty otherwise.
+std::string interactionGroupName(std::string_view name);
 // Validated Lua overlay (global DNA table and optional Remove list) as patch code.
 std::string dnaOverlayPatch(std::string_view source, std::string_view label);
 }

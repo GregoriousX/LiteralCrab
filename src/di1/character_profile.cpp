@@ -3,6 +3,7 @@
 #include "di1/character_model.hpp"
 #include <algorithm>
 #include <cstring>
+#include <map>
 #include <set>
 #include <stdexcept>
 
@@ -47,12 +48,69 @@ Template loadTemplate(NativeCatalog& catalog, std::string_view gateway) {
     if (result.mask.empty() || result.model.empty()) throw std::runtime_error("template DNA lacks identity or model: " + result.dna);
     return result;
 }
+// Stock donors for shared interaction groups the animation figure does not
+// ship itself: AnimationDonors first, else the figure shipping the group whose
+// bind pose is nearest the character's own rig (shared clips are not
+// retargeted). A group the animation figure ships natively keeps its clips.
+template<class Note>
+std::vector<std::pair<std::string, std::string>> interactionDonors(NativeCatalog& catalog, const CustomGameplay& g,
+    const Template& anim, std::map<std::string, std::array<double, 3>> rig, const Note& note) {
+    std::vector<std::pair<std::string, std::string>> result;
+    if (rig.empty()) rig = bindPose(catalog, anim.model);
+    std::map<std::string, std::map<std::string, std::array<double, 3>>> poses;
+    std::map<std::string, std::set<std::string>> shipped;
+    const auto shipsExactly = [&](const std::string& model, const std::string& group) {
+        auto found = shipped.find(model);
+        if (found == shipped.end()) found = shipped.emplace(model, shippedGroups(catalog, model)).first;
+        return found->second.contains(group);
+    };
+    // Some sets ship only on a figure's play set entity (MU bicycles on mu_mike_ps).
+    const auto entityWith = [&](const std::string& model, const std::string& group) -> std::string {
+        if (shipsExactly(model, group)) return model;
+        if (shipsExactly(model + "_ps", group)) return model + "_ps";
+        return {};
+    };
+    const auto ships = [&](const std::string& model, const std::string& group) { return !entityWith(model, group).empty(); };
+    for (const std::string_view name : {"Ship", "Bike", "Rowboat", "RideHorse", "CarRide", "VehicleDrive",
+        "VehicleDrive_SML", "Hoverboard", "JetPack_Glide", "Booster"}) {
+        const auto group = interactionGroupName(name);
+        std::string donor;
+        for (const auto& [declared, figure] : g.animationDonors) if (declared == group) donor = figure;
+        const bool declared = !donor.empty();
+        double nearest = 1.0; // Beyond this offset no shipped rig is compatible.
+        if (!declared) {
+            // The animation figure's base entity is what the player plays.
+            if (rig.empty() || shipsExactly(anim.model, group)) continue;
+            for (const auto figure : templateFigures()) {
+                if (lower(figure) == lower(anim.gateway)) continue;
+                try {
+                    const auto model = loadTemplate(catalog, figure).model;
+                    if (!ships(model, group)) continue;
+                    auto pose = poses.find(model);
+                    if (pose == poses.end()) pose = poses.emplace(model, bindPose(catalog, model)).first;
+                    const auto distance = rigDistance(rig, pose->second);
+                    if (distance >= 0 && distance < nearest) { nearest = distance; donor = std::string(figure); }
+                } catch (const std::exception&) { /* An unreadable figure is not a candidate. */ }
+            }
+            if (donor.empty()) continue;
+        }
+        if (lower(donor) == lower(anim.gateway)) continue;
+        const auto source = loadTemplate(catalog, donor);
+        // A declared figure without the set keeps the template's clips (logged below as skipped).
+        const auto entity = entityWith(lower(source.model), group);
+        result.emplace_back(group, entity.empty() ? source.model : entity);
+        char distance[32]{};
+        std::snprintf(distance, sizeof(distance), "%.3f", nearest);
+        note(group + " animations from " + source.gateway + (declared ? " (AnimationDonors)" : " (nearest rig, offset " + std::string(distance) + ")"));
+    }
+    return result;
+}
 std::string chooseTemplate(NativeCatalog& catalog, const CustomFigure& f, const std::string& model, std::vector<std::string>& messages) {
     if (!f.gameplay.templateFigure.empty()) return f.gameplay.templateFigure;
     if (!f.baseCharacter.empty() && templateFigure(f.baseCharacter)) return f.baseCharacter;
     // Nearest stock rig: the template whose entity shares the most animation files.
     if (!model.empty()) {
-        const auto source = inspectModel(catalog, model);
+        const auto source = inspectModel(catalog, customAssetPath(f, model)); // An author model wins.
         std::string best;
         std::size_t score{};
         if (source.entity) for (const auto candidate : templateFigures()) {
@@ -206,10 +264,17 @@ void resolveCustomCharacter(NativeCatalog& catalog, mods::AssetIndex& assets, Cu
     }
     g.sourceMask = text(*dna, {"AgentGadgets", "Identification", "ActorTypeMask"});
     const auto model = text(*dna, {"AgentGadgets", "EntityInstance", "ModelName"});
-    const bool form = playerForm(*dna), bipedRig = biped(*dna);
+    const bool form = playerForm(*dna);
+    bool bipedRig = biped(*dna);
+    // A humanoid on its own animation tree (a MissionGiver such as Tia Dalma)
+    // still has the stock biped skeleton: template animation sets drive it.
+    if (!bipedRig && !model.empty() && bipedSkeleton(inspectModel(catalog, customAssetPath(f, model)))) {
+        bipedRig = true;
+        note("source animation tree is not a player biped tree, but its model has the biped skeleton");
+    }
     if (!form && !bipedRig && g.body == BodyMode::Auto)
         throw std::runtime_error("automatic conversion supports biped actors only; this source is neither a player avatar "
-            "nor a biped NPC (set Body and Animations explicitly)");
+            "nor a humanoid with the biped skeleton");
     const auto body = g.body == BodyMode::Auto ? (form ? BodyMode::Source : BodyMode::Template) : g.body;
     if (body == BodyMode::Source && !form) note("Body=Source keeps a source DNA without player avatar components");
     if (!bipedRig && g.animations == AnimationMode::Auto) {
@@ -349,25 +414,39 @@ void resolveCustomCharacter(NativeCatalog& catalog, mods::AssetIndex& assets, Cu
         if (sourceRow && sourceRow->type == "Avatar" && lower(sourceRow->dna) == lower(g.sourceDna)) {
             g.rowSource = lower(g.sourceActor); g.rowSourceDna = sourceRow->dna;
         } else {
-            if (!bipedRig) throw std::runtime_error("a non-biped source needs its own Avatar actor row");
+            if (!bipedRig) throw std::runtime_error("a non-biped source needs its own Avatar actor row; "
+                "its model lacks the biped skeleton, so no template actor can carry it");
             templateRows(pieces);
             note("source has no Avatar actor row; " + tpl.gateway + "'s actor and dependency rows are cloned");
         }
     }
-    // Player model: generated only when no author model is mounted for it.
-    if (!model.empty() && customAssetPath(f, model) == model) {
-        const auto built = preparePlayerModel(catalog, assets, std::to_string(f.sku), model, tpl.model, g.animations, f.assetAliases);
+    // Player model: an authored mesh alone is bound to the template's animation
+    // sets; an authored or shipped entity is completed with what it lacks.
+    if (!model.empty()) {
+        // Animations may come from another stock figure than the body/inventory.
+        const auto anim = g.animationTemplate.empty() || lower(g.animationTemplate) == lower(tpl.gateway) ? tpl :
+            loadTemplate(catalog, g.animationTemplate);
+        // An explicit animation figure replaces the entity's own sets.
+        const auto animations = g.animations == AnimationMode::Auto && anim.gateway != tpl.gateway ? AnimationMode::Template : g.animations;
+        const auto donors = interactionDonors(catalog, g, anim, bindPose(catalog, customAssetPath(f, model)), note);
+        const auto built = preparePlayerModel(catalog, assets, std::to_string(f.sku), model, anim.model, animations, f.assetAliases, donors);
+        if (built.channelsDiffer)
+            note("player entity channels differ from " + anim.gateway + "'s; " + (built.mode == AnimationMode::Template ?
+                "the template's animation entity is used with this mesh" : "the entity is kept without template animations"));
         if (built.mode == AnimationMode::Template) {
-            note("player entity built from " + tpl.gateway + "'s animation sets for " + model + " (" + std::to_string(built.files) + " files)");
-            // The template's overrides describe the borrowed animation sets.
-            if (body == BodyMode::Source)
+            note("player entity built from " + anim.gateway + "'s animation sets for " + model + " (" + std::to_string(built.files) + " files)");
+            // The animation figure's overrides describe the borrowed animation sets.
+            if (body == BodyMode::Source || anim.gateway != tpl.gateway)
                 patch += "if type(DNA.AgentGadgets.AnimTree)=='table' then DNA.AgentGadgets.AnimTree.OverrideFile=" +
-                    (tpl.overrides.empty() ? std::string("nil") : mods::luaQuote(tpl.overrides)) + " end\n";
+                    (anim.overrides.empty() ? std::string("nil") : mods::luaQuote(anim.overrides)) + " end\n";
         } else if (built.mode == AnimationMode::Complete) {
             std::string list;
             for (const auto& name : built.addedGroups) list += (list.empty() ? "" : ", ") + name;
-            note("player entity completed with " + tpl.gateway + "'s " + list);
+            if (!list.empty()) note("player entity completed with " + anim.gateway + "'s " + list);
+            if (built.addedAliases)
+                note("player entity gained " + std::to_string(built.addedAliases) + " shared interaction alias(es)");
         }
+        for (const auto& skipped : built.skippedDonors) note("interaction donor for " + skipped + " skipped: incompatible channels or group missing");
     }
     g.bodyPatch = std::move(patch);
 }

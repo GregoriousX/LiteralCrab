@@ -35,6 +35,32 @@ namespace {
     std::atomic<unsigned> characterFxTraced{};
     std::atomic<unsigned> characterToolsTraced{};
     std::atomic<unsigned> characterProjectilesTraced{};
+    std::atomic<unsigned> privateModelTraced{};
+
+    void notePrivateModel(const char* kind, const char* name, const std::string& data,
+        unsigned requested, unsigned offset, unsigned extra = 0) {
+        if ((!trace && !config().diagnostics) || !name) return;
+        char normalized[512]{};
+        std::size_t length{};
+        for (; name[length] && length + 1 < sizeof(normalized); ++length) {
+            const auto ch = name[length];
+            normalized[length] = ch == '\\' ? '/' : ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch;
+        }
+        constexpr char prefix[] = "characters/literalcrab/assets/";
+        if (std::strncmp(normalized, prefix, sizeof(prefix) - 1) ||
+            (!std::strstr(normalized, ".vbuf") && !std::strstr(normalized, ".ibuf") &&
+                !std::strstr(normalized, ".bent") && !std::strstr(normalized, ".mtb"))) return;
+        // Independent of the general preload budget. Compute from our owned
+        // source after completion; the caller's destination may already be gone.
+        if (privateModelTraced.fetch_add(1, std::memory_order_relaxed) >= 128) return;
+        std::uint64_t hash = 14695981039346656037ull;
+        for (const unsigned char byte : data) { hash ^= byte; hash *= 1099511628211ull; }
+        const auto available = offset <= data.size() ? data.size() - offset : 0;
+        const auto copied = available < requested ? available : requested;
+        log("Custom model payload: %s %s sourceBytes=%zu fnv1a64=%016llX offset=%u requested=%u copied=%zu extra=%u%s",
+            kind, normalized, data.size(), static_cast<unsigned long long>(hash), offset, requested, copied, extra,
+            copied < requested ? " SHORT READ" : "");
+    }
 
     bool toolResource(const char* name) {
         if (!name) return false;
@@ -126,6 +152,7 @@ namespace {
             if (serveLoad(data, dest, size, offset, status)) {
                 served.fetch_add(1, std::memory_order_relaxed);
                 note("load", name ? completedName : nullptr, true);
+                notePrivateModel("load", completedName, data, size, offset);
                 return true;
             }
         }
@@ -140,6 +167,7 @@ namespace {
             if (serveAlloc(data, out, extra, flag, heap, status)) {
                 served.fetch_add(1, std::memory_order_relaxed);
                 note("load+alloc", name ? completedName : nullptr, true);
+                notePrivateModel("load+alloc", completedName, data, static_cast<unsigned>(data.size()), 0, extra);
                 return true;
             }
         }

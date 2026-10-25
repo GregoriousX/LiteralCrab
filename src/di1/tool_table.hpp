@@ -14,6 +14,9 @@ struct ToolTableEntry {
     std::string controlSource;
     // Optional native attachment control exported by the custom model.
     std::string modelHandle;
+    // A character's own tool, like ITEM_BUZZ: no upgrade prerequisite and no
+    // world (zone) list. Otherwise the base tool's purchase and worlds apply.
+    bool personal{};
 };
 
 // ToolSetInfo::CalcHash, including its case-sensitive native byte convention.

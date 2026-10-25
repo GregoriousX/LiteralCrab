@@ -12,6 +12,7 @@
 #include "di1/display.hpp"
 #include "di1/engine.hpp"
 #include "di1/mods.hpp"
+#include "di1/custom_audio.hpp"
 #include "di1/post_effects.hpp"
 #include "di1/toybox_share.hpp"
 #include "minhook/MinHook.h"
@@ -84,6 +85,7 @@ namespace {
         crabe::di1::installToyBoxShare(host, crabe::di1::config());
         // Independent of the display hooks: a refused mod loader leaves game scripts untouched.
         if (!crabe::di1::installMods(host)) {
+            crabe::di1::removeCustomAudio();
             crabe::di1::removeCharacterTargets();
             crabe::di1::removeCharacterFreedom();
         }

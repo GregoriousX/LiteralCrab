@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <stdexcept>
 
 namespace crabe::di1 {
@@ -68,19 +69,21 @@ void validateMaterials(std::string_view data) {
     const auto materials=word(data,12), shaders=word(data,16);
     if (materials>65535 || shaders>65535 || materials>data.size()/2 || shaders>data.size()/2) invalid();
     std::size_t at=20;
-    const auto strings=[&](unsigned count) {
+    // Shipped bundles may leave a material unnamed (PIR_Tia_Dalma); shader
+    // names select native shaders and must be present.
+    const auto strings=[&](unsigned count,bool allowEmpty) {
         for (unsigned i=0;i<count;++i) {
             const auto end=data.find('\0',at);
-            if (end==data.npos || end==at || end-at>255) invalid();
+            if (end==data.npos || (end==at && !allowEmpty) || end-at>255) invalid();
             for (auto p=at;p<end;++p) if (static_cast<unsigned char>(data[p])<32 ||
                 static_cast<unsigned char>(data[p])>126) invalid();
             at=end+1;
         }
     };
-    strings(shaders);
+    strings(shaders,false);
     at=(at+3)&~std::size_t(3);
     if (at>data.size() || data.size()-at<4 || word(data,at)!=materials) invalid();
-    at+=4;strings(materials);at=(at+1)&~std::size_t(1);
+    at+=4;strings(materials,true);at=(at+1)&~std::size_t(1);
     if (at>data.size() || materials*2ull>data.size()-at) invalid();
     for (unsigned i=0;i<materials;++i) {
         const auto p=at+i*2;
@@ -199,6 +202,7 @@ void preparePrivateAssetDirectory(mods::AssetIndex& assets, const std::wstring& 
     }
     const auto prefix = "characters/literalcrab/assets/" + std::string(namespaceKey) + "/";
     std::map<std::string, std::string> files;
+    std::set<std::string> normalized;
     std::size_t bytes{};
     for (const auto& file : fs::recursive_directory_iterator(root)) {
         const auto flags = GetFileAttributesW(file.path().c_str());
@@ -208,9 +212,11 @@ void preparePrivateAssetDirectory(mods::AssetIndex& assets, const std::wstring& 
         const auto relative = lower(file.path().lexically_relative(root).generic_string());
         if (!safePath(relative) || prefix.size() + relative.size() >= mods::maxChunkName - 32)
             throw std::runtime_error("invalid or too long private resource path");
-        mods::AssetMember source; source.file = file.path().wstring();
+        mods::AssetMember source; source.file = file.path().wstring(); source.name = relative;
         std::string data;
         if (!assets.read(source, data)) throw std::runtime_error("cannot read private resource: " + relative);
+        // The read normalizes text (a UTF-8 BOM); such a file is never served from disk as is.
+        if (file.file_size() != data.size()) normalized.insert(relative);
         bytes += data.size();
         if (files.size() >= 4096 || bytes > (512ull << 20)) throw std::runtime_error("private asset folder exceeds 4096 files or 512 MiB");
         if (!files.emplace(relative, std::move(data)).second) throw std::runtime_error("duplicate private resource path: " + relative);
@@ -245,7 +251,7 @@ void preparePrivateAssetDirectory(mods::AssetIndex& assets, const std::wstring& 
         // Opaque resources (including native model sidecars and audio
         // banks) can also be opened by Windows instead of the member
         // loader. Redirect only unchanged bytes to their own mod file.
-        if (data == original) disk.push_back({target, (root / fs::path(path)).wstring()});
+        if (data == original && !normalized.contains(path)) disk.push_back({target, (root / fs::path(path)).wstring()});
         mods::AssetMember member; member.name = target;
         member.generated = std::make_shared<const std::string>(std::move(data));
         pending.push_back(std::move(member));

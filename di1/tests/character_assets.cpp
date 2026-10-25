@@ -3,6 +3,8 @@
 // while mod-local resources and texture cache keys remain isolated per SKU.
 #include "di1/character_assets.hpp"
 #include "di1/character_gameplay.hpp"
+#include "di1/character_model.hpp"
+#include "di1/scene_format.hpp"
 #include "mods/lua_mods.hpp"
 #include <windows.h>
 #include <algorithm>
@@ -262,6 +264,21 @@ static void textures(const fs::path& root) {
         CHECK(result.size()==model.size() && result.substr(0,36)==model.substr(0,36));
         CHECK(result.substr(36,8)!=model.substr(36,8) && result.substr(44)==model.substr(44));
     }
+    // Shipped bundles may leave a material unnamed (PIR_Tia_Dalma's second one).
+    {
+        std::string unnamed=materialChunk();
+        unnamed.erase(44,10); // "material_A" -> "".
+        word(unnamed,8,static_cast<unsigned>(unnamed.size()));
+        std::string bundled(64,'\0');std::memcpy(bundled.data(),"BNDL",4);
+        word(bundled,4,1);word(bundled,12,2);
+        std::memcpy(bundled.data()+16,"TEXB",4);word(bundled,20,3);word(bundled,24,48);word(bundled,28,2);
+        std::memcpy(bundled.data()+36,"12345678",8);std::memcpy(bundled.data()+48,"87654321",8);
+        bundled+=unnamed;word(bundled,8,static_cast<unsigned>(bundled.size()));
+        auto u=figure(root/"unnamed-material",1000904);
+        write(fs::path(u.modPath)/u.assetDirectory/"characters/model.mtb",bundled);
+        write(fs::path(u.modPath)/u.assetDirectory/"textures/3132333435363738.tbody",body);
+        figures={u};prepareCustomAssetDirectories(assets,figures,messages);CHECK(figures.size()==1);
+    }
     word(model,72,21);auto malformed=figure(root/"bad-model-chunk",1000903);
     write(fs::path(malformed.modPath)/malformed.assetDirectory/"model.mtb",model);
     write(fs::path(malformed.modPath)/malformed.assetDirectory/"textures/3132333435363738.tbody",body);
@@ -503,8 +520,77 @@ static void reparsePoints(const fs::path& root) {
     f.modPath = bridge.wstring(); f.assetDirectory = "linked/inner"; reject(assets, f, "reparse");
 }
 
+// Humanoids on non-player trees (mission givers) share the biped joints; a
+// rig missing any limb joint (a car, robot or animal) is not driven by template sets.
+static void skeletons() {
+    ModelInfo humanoid;
+    for (const auto* joint : {"Cntrl_Hips", "Cntrl_Head", "Cntrl_Clavicle_Left", "Cntrl_Clavicle_Right", "Cntrl_Elbow_Left",
+        "Cntrl_Elbow_Right", "Cntrl_Hand_Left", "Cntrl_Hand_Right", "Cntrl_Knee_Left", "Cntrl_Knee_Right",
+        "Cntrl_Ankle_Left", "Cntrl_Ankle_Right", "Cntrl_Jaw_Pivot"}) humanoid.controls.insert(joint);
+    CHECK(bipedSkeleton(humanoid));
+    auto partial = humanoid; partial.controls.erase("Cntrl_Knee_Right"); CHECK(!bipedSkeleton(partial));
+    CHECK(!bipedSkeleton(ModelInfo{}));
+}
+// A minimal BENT: one channel, a mesh, and groups of File aliases.
+static std::string entity(const char* channel, std::initializer_list<std::pair<const char*,
+    std::initializer_list<std::pair<const char*, const char*>>>> sets) {
+    scene::Scene s; s.strings = {""};
+    const auto node = [&](std::uint16_t depth, const char* name) { s.atoms.push_back({depth, 0x01, scene::intern(s, name), {}}); };
+    const auto text = [&](std::uint16_t depth, const char* name, const char* value) {
+        s.atoms.push_back({depth, 0x0B, scene::intern(s, name), {scene::intern(s, value)}});
+    };
+    node(0, "Root"); node(1, "Channels"); text(2, "Channel", channel); text(1, "SceneFilename", "hero.oct"); node(1, "FileSets");
+    for (const auto& [group, files] : sets) {
+        text(2, "FileSet", group); node(3, "Files");
+        for (const auto& [alias, file] : files) { text(4, "File", alias); text(5, "Filename", file); }
+    }
+    return scene::encode(s);
+}
+// Authored/shipped player entities gain the template's shared interactions
+// (missing groups, LCRM_ aliases) without losing or changing their own.
+static void interactions() {
+    for (const bool sameChannels : {true, false}) {
+        AssetIndex assets;
+        const std::string entityName = "characters/literalcrab/assets/1000777/characters/hero/hero.bent";
+        generated(assets, entityName, entity("layer", {{"Core:BaseMobility", {{"IDLE", "motions/idle.oct"}}},
+            {"Core:Attacks", {{"ATTACK", "motions/a.oct"}}}}));
+        generated(assets, "characters/tpl/tpl.bent", entity(sameChannels ? "layer" : "other", {
+            {"Core:BaseMobility", {{"IDLE", "motions/idle.oct"}}},
+            {"Core:Attacks", {{"ATTACK", "motions/b.oct"}, {"LCRM_POSE", "motions/pose.oct"}, {"OTHER", "motions/other.oct"}}},
+            {"Mech:Bike", {{"BIKE", "motions/bike.oct"}}}}));
+        generated(assets, "characters/tpl/motions/pose.oct", "pose");
+        generated(assets, "characters/tpl/motions/bike.oct", "bike");
+        assets.redirects.push_back({entityName, L"unused"});
+        NativeCatalog catalog(assets, L"");
+        ResourceAliases aliases;
+        const auto result = preparePlayerModel(catalog, assets, "1000777", "characters/hero/hero", "characters/tpl/tpl",
+            AnimationMode::Auto, aliases);
+        CHECK(result.channelsDiffer == !sameChannels);
+        if (!sameChannels) {
+            // Different playback channels: the author's entity stays exactly as supplied.
+            CHECK(result.mode == AnimationMode::Source && result.addedGroups.empty() && !result.addedAliases);
+            CHECK(assets.redirects.size() == 1 && !assets.member("characters/literalcrab/assets/1000777/characters/tpl/motions/bike.oct"));
+            continue;
+        }
+        CHECK(result.mode == AnimationMode::Complete);
+        CHECK(result.addedGroups == std::vector<std::string>{"Mech:Bike"} && result.addedAliases == 1);
+        CHECK(assets.redirects.empty() && served(assets, "characters/literalcrab/assets/1000777/characters/tpl/motions/bike.oct") == "bike");
+        const auto built = scene::decode(served(assets, entityName));
+        std::vector<std::string> attacks;
+        for (std::size_t i = 0; i < built.atoms.size(); ++i)
+            if (scene::name(built, built.atoms[i]) == "File") attacks.emplace_back(scene::text(built, built.atoms[i]));
+        // IDLE and ATTACK keep their own clips; OTHER is a template power, never borrowed.
+        CHECK(std::count(attacks.begin(), attacks.end(), "ATTACK") == 1 && std::count(attacks.begin(), attacks.end(), "OTHER") == 0);
+        CHECK(std::count(attacks.begin(), attacks.end(), "LCRM_POSE") == 1);
+        CHECK(std::count(attacks.begin(), attacks.end(), "BIKE") == 1);
+        bool ownClip{};
+        for (const auto& atom : built.atoms) ownClip = ownClip || (scene::isText(atom) && scene::text(built, atom) == "motions/a.oct");
+        CHECK(ownClip);
+    }
+}
 int main() {
     try {
+        skeletons(); interactions();
         Fixture fixture;
         isolatedMounts(fixture.root); textures(fixture.root); malformedMaterials(fixture.root);
         scripts(fixture.root); standaloneMounts(fixture.root);

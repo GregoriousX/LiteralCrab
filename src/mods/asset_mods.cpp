@@ -197,13 +197,19 @@ bool AssetIndex::read(const AssetMember& item, std::string& data) const noexcept
     if (item.generated) {
         try { data = *item.generated; return true; } catch (...) { return false; }
     }
-    if (!item.package) return readFile(item.file, data);
-    try {
+    if (!item.package) {
+        if (!readFile(item.file, data)) return false;
+    } else try {
         data = item.package->read(item.package->entries()[item.entry]);  // Verifies the CRC.
-        return true;
     } catch (...) {
         return false;
     }
+    // Editors commonly save UTF-8 text with a BOM, which Lua 5.1 rejects.
+    // Text data chunks are served without it; compiled chunks are untouched.
+    const std::string_view name(item.name);
+    if (data.starts_with("\xEF\xBB\xBF") && (name.ends_with(".lua") || name.ends_with(".dnax") ||
+        name.ends_with(".btx") || name.ends_with(".bmx"))) data.erase(0, 3);
+    return true;
 }
 
 AssetIndex AssetIndex::build(const std::wstring& gameAssets, const std::wstring& cache,

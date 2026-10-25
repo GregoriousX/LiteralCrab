@@ -25,7 +25,11 @@ void* __cdecl allocate(unsigned size, bool, unsigned*, void*) {
 }
 bool __cdecl foreignLoad(const char*, void*, unsigned, unsigned, void*) { ++foreignCalls; return false; }
 bool __cdecl foreignAlloc(const char*, void**, unsigned, bool, void*, void*) { ++foreignCalls; return false; }
-bool provider(const char* name, std::string& data) { CHECK(!std::strcmp(name, "new/path/custom.dnax")); data = "abcdef"; return true; }
+bool provider(const char* name, std::string& data) {
+    CHECK(!std::strcmp(name, "new/path/custom.dnax") ||
+        !std::strcmp(name, "characters\\literalcrab\\assets\\1000900\\characters\\ts_zurg\\ts_zurg_0.vbuf"));
+    data = "abcdef"; return true;
+}
 void put(unsigned char* target, const char* hex) {
     while (*hex) {
         while (*hex == ' ') ++hex;
@@ -121,6 +125,24 @@ int main() {
     }
     CHECK(signals == 2);
     CHECK(allocationCalls==1);
+    // Private geometry diagnostics must survive retirement of the filename too.
+    // Verify full reads, native subranges and EOF without writing past the
+    // available payload or modifying the unused destination bytes.
+    for (const unsigned offset : {0u, 4u, 25u}) {
+        DWORD old{}; CHECK(VirtualProtect(retiredName, 4096, PAGE_READWRITE, &old));
+        std::strcpy(reinterpret_cast<char*>(retiredName),
+            "characters\\literalcrab\\assets\\1000900\\characters\\ts_zurg\\ts_zurg_0.vbuf");
+        std::array<unsigned char, 0x20> status{}; expectedStatus = status.data();
+        std::array<char, 12> destination; destination.fill('!');
+        const auto count = offset == 0 ? 6u : offset == 4 ? 2u : 0u;
+        CHECK(reinterpret_cast<Load>(image + 0x1E200)(reinterpret_cast<const char*>(retiredName),
+            destination.data(), 10, offset, status.data()));
+        if (count) CHECK(!std::memcmp(destination.data(), "abcdef" + offset, count));
+        for (auto i = count; i < destination.size(); ++i) CHECK(destination[i] == '!');
+        CHECK(*reinterpret_cast<void**>(status.data() + 0x18) == destination.data());
+        CHECK(*reinterpret_cast<unsigned*>(status.data() + 0x14) == count);
+        CHECK(*reinterpret_cast<unsigned*>(status.data() + 0x10) == 0);
+    }
     // Reject wraparound before entering the engine allocator. This measured
     // trampoline continuation restores its native stack and returns a cache miss.
     put(image+0x1E5F0+10,"81 C4 84 00 00 00 33 C0 C3");
@@ -132,7 +154,7 @@ int main() {
     void* rejectedOutput=reinterpret_cast<void*>(0x12345678);
     for (unsigned extra : {~0u,~0u-5}) {
         CHECK(!safeAlloc(reinterpret_cast<Alloc>(image+0x1E5F0),&rejectedOutput,rejectedStatus.data(),extra));
-        CHECK(allocationCalls==1 && signals==2 && rejectedOutput==reinterpret_cast<void*>(0x12345678));
+        CHECK(allocationCalls==1 && signals==5 && rejectedOutput==reinterpret_cast<void*>(0x12345678));
         CHECK(rejectedStatus==originalStatus);
     }
     // After the completion signal starts, the request can already be retired.

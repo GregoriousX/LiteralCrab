@@ -160,6 +160,7 @@ std::string modFile(const std::wstring& modPath, const std::string& relative, co
     CloseHandle(handle);
     if (size.QuadPart < 0) throw std::runtime_error("author file unreadable or larger than " + std::to_string(limit >> 10) + " KiB: " + relative);
     if (bytes.starts_with("\x1bLua")) throw std::runtime_error("author Lua must be source text, not bytecode: " + relative);
+    if (bytes.starts_with("\xEF\xBB\xBF")) bytes.erase(0, 3); // UTF-8 BOM from common editors.
     return bytes;
 }
 template<class T> T mode(const std::map<std::string, std::string>& fields, const char* key,
@@ -444,7 +445,8 @@ std::vector<CustomFigure> loadCustomFigures(const std::vector<mods::Mod>& mods, 
                 if (key != "skuid" && key != "name" && key != "gateway" && key != "actor" && key != "basecharacter" &&
                     key != "displayname" && key != "description" && key != "icon" && key != "playset" &&
                     key != "assetdirectory" && key != "source" && key != "template" && key != "body" &&
-                    key != "animations" && key != "dna" && key != "dnascript")
+                    key != "animations" && key != "dna" && key != "dnascript" && key != "animationtemplate" &&
+                    key != "animationdonors")
                     messages.push_back("Custom figure " + mod.folder + ": unknown Character key ignored: " + key);
             CustomFigure figure;
             figure.name = get(fields, "name");
@@ -472,9 +474,24 @@ std::vector<CustomFigure> loadCustomFigures(const std::vector<mods::Mod>& mods, 
                 {"source", AnimationMode::Source}, {"complete", AnimationMode::Complete}, {"template", AnimationMode::Template}});
             gameplay.dnaOverlay = get(fields, "dna");
             gameplay.dnaScript = get(fields, "dnascript");
+            gameplay.animationTemplate = get(fields, "animationtemplate");
+            if (!gameplay.animationTemplate.empty() && !templateFigure(gameplay.animationTemplate))
+                throw std::runtime_error("AnimationTemplate must name a playable stock biped figure, for example AV_MrIncredible");
+            // AnimationDonors=Ship:PIR_DavyJones,Bike:MU_Mike
+            for (const auto& entry : commaList(get(fields, "animationdonors"))) {
+                const auto colon = entry.find(':', entry.starts_with("Mech:") || entry.starts_with("mech:") ? 5 : 0);
+                const auto group = colon == std::string::npos ? std::string{} : interactionGroupName(entry.substr(0, colon));
+                const auto donor = colon == std::string::npos ? std::string{} : entry.substr(colon + 1);
+                if (group.empty() || !templateFigure(donor))
+                    throw std::runtime_error("AnimationDonors entries are Group:StockFigure, for example Ship:PIR_DavyJones");
+                if (std::any_of(gameplay.animationDonors.begin(), gameplay.animationDonors.end(), [&](const auto& d) { return d.first == group; }))
+                    throw std::runtime_error("AnimationDonors names " + group + " twice");
+                gameplay.animationDonors.emplace_back(group, donor);
+            }
             if (!gameplay.enabled() && (!gameplay.templateFigure.empty() || !gameplay.dnaOverlay.empty() || !gameplay.dnaScript.empty() ||
-                gameplay.body != BodyMode::Auto || gameplay.animations != AnimationMode::Auto))
-                throw std::runtime_error("Template, Body, Animations, DNA and DNAScript need a gameplay Source");
+                gameplay.body != BodyMode::Auto || gameplay.animations != AnimationMode::Auto || !gameplay.animationTemplate.empty() ||
+                !gameplay.animationDonors.empty()))
+                throw std::runtime_error("Template, Body, Animations, AnimationTemplate, AnimationDonors, DNA and DNAScript need a gameplay Source");
             if (!gameplay.templateFigure.empty() && !templateFigure(gameplay.templateFigure))
                 throw std::runtime_error("Template must name a playable stock biped figure, for example AV_Buzz or LR_LoneRanger");
             if (!gameplay.dnaOverlay.empty())
@@ -624,6 +641,13 @@ const std::vector<std::string_view>& templateFigures() {
 bool templateFigure(std::string_view gateway) {
     const auto key = lower(gateway);
     return std::any_of(templateFigures().begin(), templateFigures().end(), [&](auto name) { return lower(name) == key; });
+}
+std::string interactionGroupName(std::string_view name) {
+    const auto key = lower(name.starts_with("Mech:") || name.starts_with("mech:") ? name.substr(5) : name);
+    for (const std::string_view group : {"Ship", "Bike", "Rowboat", "RideHorse", "CarRide", "VehicleDrive",
+        "VehicleDrive_SML", "Hoverboard", "JetPack_Glide", "Booster"})
+        if (lower(group) == key) return "Mech:" + std::string(group);
+    return {};
 }
 
 std::string dnaOverlayPatch(std::string_view source, std::string_view label) {
