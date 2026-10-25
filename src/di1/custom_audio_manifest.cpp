@@ -62,6 +62,14 @@ std::wstring fullPath(const std::wstring& path) {
     const auto written = GetFullPathNameW(path.c_str(), count, out.data(), nullptr);
     if (!written || written >= count) throw std::runtime_error("invalid audio mod folder");
     out.resize(written);
+    // The opened file's final path uses long names. Expand 8.3 components
+    // (for example a RUNNER~1 temp folder) so the alias check compares like with like.
+    const auto longCount = GetLongPathNameW(out.c_str(), nullptr, 0);
+    if (longCount && longCount <= 32768) {
+        std::wstring expanded(longCount, L'\0');
+        const auto longWritten = GetLongPathNameW(out.c_str(), expanded.data(), longCount);
+        if (longWritten && longWritten < longCount) { expanded.resize(longWritten); out = std::move(expanded); }
+    }
     return out;
 }
 void rejectLinks(const std::wstring& path) {

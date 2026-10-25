@@ -6,6 +6,7 @@
 #include "toyboxes/save_file.hpp"
 #include "toyboxes/server.hpp"
 #include <windows.h>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <filesystem>
@@ -255,7 +256,12 @@ static int run() {
     CHECK(lists == 4);  // broken.zip has no list; duplicate.zip's was removed.
     // Changing a loose file converts its folder again.
     messages.clear();
-    write(root / "toyboxes" / "loose" / "SRR9", saveFile(looseSlot() + " "));
+    const auto loose = root / "toyboxes" / "loose" / "SRR9";
+    const auto previous = fs::last_write_time(loose);
+    write(loose, saveFile(looseSlot() + " "));
+    // An encrypted save can keep its padded size, and a fast rewrite can share
+    // the old timestamp tick: make the edit visible as a real save would be.
+    fs::last_write_time(loose, previous + std::chrono::seconds(2));
     library = buildLibrary(roots, cache.wstring(), &knownWorld, &record);
     CHECK(logged("1 package(s) converted"));
     fs::remove_all(root);
