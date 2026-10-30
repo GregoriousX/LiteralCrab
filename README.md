@@ -32,7 +32,7 @@ Every option outside the display fixes is **off by default**. With the default s
 - Custom portal characters and tools: a character needs a name and a native source actor (NPCs, mission givers and cut avatars included) or its own model; its player body, inventory, equipment and animations are prepared privately from the game's own data, with interaction animations taken from the nearest matching stock rig.
 - Optional gameplay audio for custom characters and tools from loose Ogg Vorbis/WAV files, with effects, occasional barks and private actor-message triggers, positioned in 3D like native sounds; cutscene audio stays native. See the modding guide for the current testing scope.
 
-See the [modding guide](di1/MODDING.md).
+See the [modding guide](docs/modding.md).
 
 ## Installation
 
@@ -41,7 +41,7 @@ See the [modding guide](di1/MODDING.md).
 3. Install a compatible **32-bit ASI loader**. The tested option is [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader), installed as `dinput8.dll`.
 4. Start the game.
 
-Keep the original `binkw32.dll` unchanged. If you have another display or resolution mod installed, read the [installation notes](di1/README.md) to avoid conflicts.
+Keep the original `binkw32.dll` unchanged. If you have another display or resolution mod installed, read the [installation notes](docs/troubleshooting.md) to avoid conflicts.
 
 ## Configuration
 
@@ -60,9 +60,13 @@ SkipIntro=1
 MotionBlur=0
 ```
 
-The INI groups its settings by topic and explains each one. See the [full configuration guide](di1/README.md) for every option.
+The INI groups its settings by topic and explains each one. See the [full configuration guide](docs/configuration.md) for every option.
 
 Some options work through the mod loader and need `[Mods] Enabled=1` (the default): `[ToyBox] LimitScale`, `[Gameplay] CharactersInAnyPlayset`, `[ToyStore] Infinity` and the `[ToyBoxes]` menu entry.
+
+## Documentation
+
+See the [documentation index](docs/README.md): configuration, play set features, Toy Box Share, characters, modding and troubleshooting.
 
 ## Compatibility
 
