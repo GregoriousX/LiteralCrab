@@ -112,6 +112,7 @@ int wmain(int argc, wchar_t** argv) {
         load(root / L"shipped", &shipped);
         CHECK(config().testExperienceMultiplier == 1 && config().toyBoxLimitScale == 1);
         CHECK(!config().toolsInAnyPlayset);
+        CHECK(!config().toyStoreInfinity && !config().toyStoreInfinityAll);
         disabled(root / L"shipped");
         reset();
     }
@@ -124,7 +125,15 @@ int wmain(int argc, wchar_t** argv) {
         CHECK(config().toolsInAnyPlayset == (characters && tools));
         reset();
     }
+    for (const bool infinity : {false, true}) for (const bool all : {false, true}) {
+        const std::string ini = "[ToyStore]\nInfinity=" + std::to_string(infinity) + "\nInfinityAll=" + std::to_string(all) + "\n";
+        load(root / (L"store-" + std::to_wstring(infinity) + L"-" + std::to_wstring(all)), &ini);
+        CHECK(config().toyStoreInfinity == infinity);
+        CHECK(config().toyStoreInfinityAll == (infinity && all));
+        reset();
+    }
     load(root / L"legacy-after-tools", &oldIni);
+    CHECK(!config().toyStoreInfinity && !config().toyStoreInfinityAll);
     CHECK(!config().toolsInAnyPlayset);
     reset();
 

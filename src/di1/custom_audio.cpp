@@ -16,6 +16,19 @@ std::string customAudioMessage(const AudioProfile& profile, const AudioCue& cue)
     if (!profile.tool && trigger=="Respawn") trigger="DynamicExploderReassembled";
     return trigger;
 }
+std::size_t bindToolFireSounds(std::vector<AudioProfile>& profiles, const std::vector<CustomTool>& tools) {
+    std::size_t converted{};
+    for (auto& profile : profiles) {
+        if (!profile.tool || profile.voice) continue;
+        const auto tool = std::find_if(tools.begin(), tools.end(), [&](const CustomTool& t) { return t.table.id == profile.identity; });
+        if (tool == tools.end() || tool->fireSound.empty() || tool->fireSound == "none") continue;
+        if (std::any_of(profile.cues.begin(), profile.cues.end(), [&](const AudioCue& c) { return c.replace && c.trigger == tool->fireSound; }))
+            continue;
+        for (auto& cue : profile.cues)
+            if (!cue.replace && cue.trigger == "Fire") { cue.replace = true; cue.trigger = tool->fireSound; ++converted; }
+    }
+    return converted;
+}
 std::string customAudioDnaPatch(const AudioProfile& profile, std::size_t index) {
     std::string code = "local _,_,log=...\nlocal entries={\n";
     for (std::size_t i = 0; i < profile.cues.size(); ++i) {
@@ -61,16 +74,25 @@ std::string customAudioBankPatch(const std::vector<AudioProfile>& profiles) {
         code += "}},\n";
     }
     code += R"lua(}
-if type(DataMap)~='table' or type(DataMap.Actor)~='table' then return end
+if type(DataMap)~='table' then return end
+local function append(files,file)
+    for _,old in ipairs(files) do
+        if type(old)=='string' and string.lower(old)==string.lower(file) then return end
+    end
+    files[#files+1]=file
+end
+-- The engine counts references only for listed Audio records; native characters get shared banks
+-- (biped.fev, steps.fev) as dependencies of their own FEV, without one. A bank released with a
+-- custom actor would unload for every character, so the level's common preload holds one too.
+local playsets=DataMap.Playset
+local common=type(playsets)=='table' and playsets._loadforallplaysets_
 for _,entry in ipairs(declarations) do
-    local row=DataMap.Actor[entry.actor]
-    if type(row)=='table' and type(row.Files)=='table' then
-        for _,file in ipairs(entry.files) do
-            local present=false
-            for _,old in ipairs(row.Files) do
-                if type(old)=='string' and string.lower(old)==string.lower(file) then present=true end
-            end
-            if not present then row.Files[#row.Files+1]=file end
+    local row=type(DataMap.Actor)=='table' and DataMap.Actor[entry.actor]
+    for _,file in ipairs(entry.files) do
+        if type(row)=='table' and type(row.Files)=='table' then append(row.Files,file) end
+        if type(common)=='table' then
+            if type(common.Files)~='table' then common.Files={} end
+            append(common.Files,file)
         end
     end
 end

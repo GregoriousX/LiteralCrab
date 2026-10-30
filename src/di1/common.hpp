@@ -35,6 +35,8 @@ struct Config {
     bool bloom = true;
     // Exchange the X and Y buttons of XInput controllers.
     bool swapXY = false;
+    // START on a second controller joins as local player 2 (console drop-in).
+    bool splitScreen = false;
     // Multiplier for the Toy Box editor's usage limits (the "memory" meter); 1 keeps the game's.
     unsigned toyBoxLimitScale = 1;
     // Let every character play in every play set (needs mods enabled for ownership/FX data).
@@ -42,6 +44,9 @@ struct Config {
     // Widen tool world filters only; native unlocks and suppression still apply.
     bool toolsInAnyPlayset = false;
     bool traceCharacterFreedom = false;
+    // Toy Store Infinity in play sets: unlocked vehicles/mounts of every world; All lists locked ones too.
+    bool toyStoreInfinity = false;
+    bool toyStoreInfinityAll = false;
     // Temporary character-freedom testing aid; native rewards remain unchanged at 1.
     unsigned testExperienceMultiplier = 1;
     // Start without the logo movies.

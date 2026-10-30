@@ -546,7 +546,7 @@ variant and avoids an immediate repeat when more than one is available.
 | Character `Spawn` | Once when this private local-player actor becomes available in gameplay. |
 | Character `Idle` | Periodic gameplay bark, after `IdleInterval` seconds; it is an ambient timer, not a test that the character is standing still. |
 | Character `Land` / `Respawn` | Native `CollisionLanded` / `DynamicExploderReassembled` actor message. |
-| Tool `Fire` | Native `ShootGun` request on this tool, not confirmation that a projectile hit or dealt damage. |
+| Tool `Fire` | Native `ShootGun` request on this tool, not confirmation that a projectile hit or dealt damage. On a tool whose gun is cloned from a native one, `Fire` takes the place of that gun's own shot sound: each shot plays only your clip, in every play set and after a mid-game character swap. No native sound name is needed. |
 | Tool `Equip` / `Spawn` / `Unequip` | Native `Activate` / `Activate` / `Deactivate` message on this tool. |
 | Other names | Exact, case-sensitive native actor messages. They must exist and be emitted on the particular actor; animation names are not automatically actor messages. |
 
@@ -594,7 +594,9 @@ Banks=Zurgbot_Melee.fev
 ```
 
 The existing `Zurgbot_Melee.fev` references `zurgbot_melee_se.fsb`; the FSB alone
-does not define event triggers. A bank declaration only makes its events
+does not define event triggers. Each bank is also kept in the level's common preload: the game counts
+references only for listed banks, while native characters receive shared banks such as `biped.fev`
+and `steps.fev` as dependencies of their own FEV, so releasing the custom actor must not unload them. A bank declaration only makes its events
 available: add a cue to play one. Native events are bounded to 16 owned handles,
 are stopped on a cutscene/owner change, and have a 30-second ceiling; this API is
 for gameplay effects and short barks, not music or cinematics.
@@ -605,6 +607,14 @@ during gameplay. Without `Replace.`, cues are additions. An unmatched owner,
 ordinary actor or cutscene always retains the original call. Replacement
 cooldown/chance can intentionally leave a trigger silent. This route concerns
 the native actor-sound path; it does not intercept cinematic/dialog playback.
+Native sounds of a custom character or tool also work when it is picked mid-game: the game then loads its
+banks' events without their samples, and LiteralCrab loads the samples of the event group the first time
+one of its events plays (the first shot after a swap may still be silent). PL: natywne dźwięki działają
+także po wyborze postaci w trakcie gry; LiteralCrab doczytuje sample grupy przy pierwszym zdarzeniu.
+
+Native event names (for `Replace.`) appear in `LiteralCrab.log` with `[Gameplay] TraceCharacterFreedom=1`
+(`Custom audio trace: native event ...`); a gun's shot never needs one, `Fire` covers it. PL: nazwy
+natywnych zdarzeń pokazuje log przy `TraceCharacterFreedom=1`; strzał broni ich nie wymaga, wystarczy `Fire`.
 
 PL: Własne pliki dźwiękowe są domyślnie odtwarzane w 3D w pozycji gracza w świecie
 (dźwięki narzędzia — w pozycji gracza, który je trzyma), tak jak natywne zdarzenia
@@ -643,7 +653,7 @@ PL: `Land` i `Respawn` oznaczają `CollisionLanded` i
 `DynamicExploderReassembled`; `Fire`, `Equip` i `Unequip` narzędzia oznaczają
 `ShootGun`, `Activate` i `Deactivate`. Pozostałe nazwy muszą być rzeczywistymi
 komunikatami danego aktora, z zachowaniem wielkości liter. `Fire` potwierdza
-żądanie strzału, a nie trafienie. Efekty i kwestie trafiają do natywnych kanałów
+żądanie strzału, a nie trafienie. Gdy broń narzędzia jest klonem broni natywnej, `Fire` zastępuje jej własny dźwięk strzału: każdy strzał gra tylko Twój plik, w każdym playsecie i po zmianie postaci w trakcie gry, bez podawania natywnych nazw. Efekty i kwestie trafiają do natywnych kanałów
 `sfx`/`dialog` i respektują głośność/pauzę. Własne pliki są domyślnie przestrzenne
 (3D w pozycji gracza), a natywne zdarzenia zachowują oryginalne pozycjonowanie.
 Cutscenki zachowują oryginalny dźwięk, a własne klipy są wtedy blokowane i
@@ -651,7 +661,8 @@ zatrzymywane. Zmiana postaci również zatrzymuje jej klipy; kwestie nie nakład
 się na inne własne kwestie tego gracza.
 
 PL: `event:<zdarzenie>` używa istniejącego zdarzenia gry, a `Banks` dodaje jego
-zależność FEV, np. `Zurgbot_Melee.fev`. Sam FSB ani preload nie przypisuje efektu
+zależność FEV, np. `Zurgbot_Melee.fev`. Bank trafia też do wspólnego preloadu poziomu, więc zmiana
+postaci nie wyładowuje wspólnych banków (`biped.fev`, `steps.fev`) innym postaciom. Sam FSB ani preload nie przypisuje efektu
 do akcji. Opcjonalne `Replace.<zdarzenie>` podmienia tylko dźwięk właściwego
 customowego aktora podczas gry. Limity to 64 wpisy na profil, osiem wariantów,
 8 MiB na plik i 64 MiB łącznie oraz 16 równoczesnych klipów. Banki natywne mają

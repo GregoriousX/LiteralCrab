@@ -77,6 +77,13 @@ static void dna() {
     CHECK(run(state,"DataMap={Actor={native={Files={'Audio|stock'}},lcr_test={Files={'DNA|private.dnax'}}}};stock=DataMap.Actor.native"));
     const auto banks=patch(customAudioBankPatch({p,p}));CHECK(run(state,banks));CHECK(run(state,banks));
     CHECK(run(state,"assert(DataMap.Actor.native==stock and #stock.Files==1);assert(#DataMap.Actor.lcr_test.Files==2 and DataMap.Actor.lcr_test.Files[2]=='Audio|Zurgbot_Melee.fev')"));
+    // The level's common preload keeps a reference, so releasing the actor never unloads a shared bank.
+    CHECK(run(state,"DataMap.Playset={_loadforallplaysets_={Files={'Audio|zurgbot_melee.fev'}},other={Files={}}}"));
+    CHECK(run(state,banks));CHECK(run(state,"assert(#DataMap.Playset._loadforallplaysets_.Files==1 and #DataMap.Playset.other.Files==0)"));
+    CHECK(run(state,"DataMap.Playset={_loadforallplaysets_={}}"));CHECK(run(state,banks));CHECK(run(state,banks));
+    CHECK(run(state,"assert(#DataMap.Playset._loadforallplaysets_.Files==1 and DataMap.Playset._loadforallplaysets_.Files[1]=='Audio|Zurgbot_Melee.fev')"));
+    CHECK(run(state,"DataMap={Playset={_loadforallplaysets_={Files={}}}}"));CHECK(run(state,banks));
+    CHECK(run(state,"assert(#DataMap.Playset._loadforallplaysets_.Files==1)"));
     crabe::mods::Index index;addCustomAudioPatches(index,{p});CHECK(!index.empty());
     crabe::mods::Index observed;addCustomAudioPatches(observed,{p},true);
     CHECK(observed.scripts.size()+1==index.scripts.size()); // Native dispatch needs no synthetic SOUND gadget.
@@ -85,4 +92,22 @@ static void dna() {
     crabe::mods::Index none;addCustomAudioPatches(none,{});CHECK(none.empty());
     lua_close(state);
 }
-int main() {routing();dna();std::printf("Custom audio policy/DNA checks: %u failure(s).\n",failures);return failures?1:0;}
+// A tool cloned from a native gun: its Fire replaces the gun's shot event; voice, other cues,
+// tools without a gun and an explicit Replace stay as declared.
+static void fireSounds() {
+    CustomTool gun;gun.table.id="LCR_GUN";gun.fireSound="zurgboss_fire";
+    CustomTool plain;plain.table.id="LCR_PLAIN";
+    auto effects=profile();effects.identity="LCR_GUN";effects.tool=true;
+    AudioCue fire;fire.trigger="Fire";fire.volume=0.5f;effects.cues.push_back(fire);
+    auto voice=effects;voice.voice=true;
+    auto other=effects;other.identity="LCR_PLAIN";
+    auto manual=effects;AudioCue own;own.trigger="zurgboss_fire";own.replace=true;manual.cues.push_back(own);
+    std::vector<AudioProfile> p{effects,voice,other};
+    CHECK(bindToolFireSounds(p,{gun,plain})==1);
+    CHECK(p[0].cues[1].replace && p[0].cues[1].trigger=="zurgboss_fire" && p[0].cues[1].volume==0.5f);
+    CHECK(p[0].cues[0].trigger=="CollisionLanded" && !p[0].cues[0].replace);
+    CHECK(!p[1].cues[1].replace && p[1].cues[1].trigger=="Fire" && !p[2].cues[1].replace);
+    std::vector<AudioProfile> m{manual};
+    CHECK(bindToolFireSounds(m,{gun})==0 && m[0].cues[1].trigger=="Fire");
+}
+int main() {routing();dna();fireSounds();std::printf("Custom audio policy/DNA checks: %u failure(s).\n",failures);return failures?1:0;}

@@ -69,6 +69,7 @@ void openLogAndConfig(HMODULE module) {
     settings.depthOfField = GetPrivateProfileIntW(L"PostProcessing", L"DepthOfField", 1, iniPath) != 0;
     settings.bloom = GetPrivateProfileIntW(L"PostProcessing", L"Bloom", 1, iniPath) != 0;
     settings.swapXY = GetPrivateProfileIntW(L"Controller", L"SwapXY", 0, iniPath) != 0;
+    settings.splitScreen = GetPrivateProfileIntW(L"SplitScreen", L"Enabled", 0, iniPath) != 0;
     const auto limitScale = GetPrivateProfileIntW(L"ToyBox", L"LimitScale", 1, iniPath);
     if (limitScale >= 1 && limitScale <= 100) settings.toyBoxLimitScale = limitScale;
     else log("Invalid ToyBox LimitScale; using the game's limits.");
@@ -79,6 +80,12 @@ void openLogAndConfig(HMODULE module) {
         settings.toolsInAnyPlayset = false;
     }
     settings.traceCharacterFreedom = GetPrivateProfileIntW(L"Gameplay", L"TraceCharacterFreedom", 0, iniPath) != 0;
+    settings.toyStoreInfinity = GetPrivateProfileIntW(L"ToyStore", L"Infinity", 0, iniPath) != 0;
+    settings.toyStoreInfinityAll = GetPrivateProfileIntW(L"ToyStore", L"InfinityAll", 0, iniPath) != 0;
+    if (settings.toyStoreInfinityAll && !settings.toyStoreInfinity) {
+        log("ToyStore: InfinityAll needs Infinity=1; Toy Store Infinity stays off.");
+        settings.toyStoreInfinityAll = false;
+    }
     const auto experienceScale = GetPrivateProfileIntW(L"Gameplay", L"TestExperienceMultiplier", 1, iniPath);
     if (experienceScale >= 1 && experienceScale <= 100) settings.testExperienceMultiplier = experienceScale;
     else log("Invalid Gameplay TestExperienceMultiplier; using 1.");

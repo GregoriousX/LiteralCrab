@@ -19,8 +19,10 @@ Every option outside the display fixes is **off by default**. With the default s
 - Switch off motion blur, depth of field and bloom individually.
 - Choose how long the camera waits before swinging back behind the character.
 - Swap the X and Y buttons of Xbox-compatible controllers.
+- Experimental local two-player split screen with a second controller.
 - Raise the Toy Box editor's object and memory limits.
 - Play any character in any play set.
+- Toy Store Infinity: a second play set Toy Store with the unlocked vehicles and mounts of every world, placed for free.
 - Toy Box Share restored, with Toy Boxes from ZIP packages or loose saves (PC, PS3 and Wii U) in the `toyboxes` folder, and experimentally from web servers.
 
 **Mods**
@@ -60,7 +62,7 @@ MotionBlur=0
 
 The INI groups its settings by topic and explains each one. See the [full configuration guide](di1/README.md) for every option.
 
-Some options work through the mod loader and need `[Mods] Enabled=1` (the default): `[ToyBox] LimitScale`, `[Gameplay] CharactersInAnyPlayset` and the `[ToyBoxes]` menu entry.
+Some options work through the mod loader and need `[Mods] Enabled=1` (the default): `[ToyBox] LimitScale`, `[Gameplay] CharactersInAnyPlayset`, `[ToyStore] Infinity` and the `[ToyBoxes]` menu entry.
 
 ## Compatibility
 

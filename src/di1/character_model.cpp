@@ -82,6 +82,13 @@ bool borrowedAlias(std::string_view group, std::string_view alias) {
     return interactionGroup(group) || key.starts_with("lcrm_") ||
         (group == "Playset:MU_OneOffs" && key == "rct_stink_good") || (group == "Playset:Toy_OneOffs" && key == "rct_fartplant");
 }
+// Groups a ridden or driven toy plays on its rider; a play set entity has its own world's only.
+bool rideGroup(std::string_view group) {
+    for (const std::string_view ride : {"Mech:RideHorse", "Mech:Bike", "Mech:CarRide", "Mech:VehicleDrive",
+        "Mech:VehicleDrive_SML", "Mech:Rowboat", "Mech:Ship"})
+        if (group == ride) return true;
+    return false;
+}
 bool sameSubtree(const scene::Scene& a, std::size_t ai, const scene::Scene& b, std::size_t bi) {
     const auto aEnd = scene::subtreeEnd(a, ai), bEnd = scene::subtreeEnd(b, bi);
     if (aEnd - ai != bEnd - bi) return false;
@@ -436,5 +443,73 @@ PlayerModel preparePlayerModel(NativeCatalog& catalog, mods::AssetIndex& assets,
     std::sort(assets.members.begin(), assets.members.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
     aliases = std::move(updated);
     return result;
+}
+
+std::vector<std::string> completePlaysetRides(NativeCatalog& catalog, mods::AssetIndex& assets, std::string_view playsetModel,
+    std::string_view baseModel) {
+    const auto path = lowerPath(playsetModel), base = lowerPath(baseModel), directory = directoryOf(path);
+    auto built = identical(readEntity(catalog, path), path + ".bent");
+    const auto donor = identical(readEntity(catalog, base), base + ".bent");
+    const auto channels = [](const scene::Scene& s) { return scene::child(s, 0, "Channels"); };
+    if (channels(built) == scene::npos || channels(donor) == scene::npos ||
+        !sameSubtree(built, channels(built), donor, channels(donor))) return {};
+    std::set<std::string> present;
+    for (const auto& [name, _] : groups(built)) present.insert(name);
+    std::vector<std::string> added;
+    std::set<std::string> needed;
+    for (const auto& [name, index] : groups(donor)) {
+        if (!rideGroup(name) || present.contains(name)) continue;
+        std::vector<scene::Atom> appended;
+        const auto parent = fileSets(built);
+        const auto depth = built.atoms[parent].depth + 1 - donor.atoms[index].depth;
+        for (auto at = index, end = scene::subtreeEnd(donor, index); at < end; ++at) {
+            auto atom = donor.atoms[at];
+            atom.depth = static_cast<std::uint16_t>(atom.depth + depth);
+            atom.name = scene::intern(built, donor.strings[atom.name]);
+            if (atom.kind == 0x05 || atom.kind == 0x0B || atom.kind == 0x0A || atom.kind == 0x4A)
+                for (auto& value : atom.values) value = scene::intern(built, donor.strings[value]);
+            if (reference(built, atom)) {
+                const auto target = joinPath(directoryOf(base), scene::text(built, atom));
+                scene::setText(built, atom, relativePath(directory, target));
+                needed.insert(target);
+            }
+            appended.push_back(std::move(atom));
+        }
+        built.atoms.insert(built.atoms.begin() + static_cast<std::ptrdiff_t>(scene::subtreeEnd(built, parent)), appended.begin(), appended.end());
+        added.push_back(name);
+    }
+    if (added.empty()) return added;
+    const auto bent = scene::encode(built);
+    (void)identical(bent, "completed play set entity");
+    // Motions the play set entity's archive or the mods already provide stay as they are;
+    // the rest come from the character's own archive, under their usual names.
+    const auto own = catalog.members(entityArchive(path)), character = catalog.members(entityArchive(base));
+    std::vector<std::string> pending(needed.begin(), needed.end());
+    std::vector<mods::AssetMember> members;
+    while (!pending.empty()) {
+        const auto file = pending.back(); pending.pop_back();
+        if (assets.member(file) || own.contains(file)) continue;
+        const auto found = character.find(file);
+        if (found == character.end()) throw std::runtime_error("ride motion missing from " + base + ": " + file);
+        mods::AssetMember member;
+        member.name = file; member.package = found->second.archive; member.entry = found->second.entry;
+        if (file.ends_with(".banm")) {
+            std::string bytes;
+            if (!assets.read(member, bytes)) throw std::runtime_error("cannot read " + file);
+            for (const auto& child : references(scene::decode(bytes), directoryOf(file)))
+                if (needed.insert(child).second) pending.push_back(child);
+        }
+        if (std::none_of(members.begin(), members.end(), [&](const auto& m) { return m.name == file; })) members.push_back(std::move(member));
+    }
+    const auto entityName = path + ".bent";
+    std::erase_if(assets.members, [&](const mods::AssetMember& member) { return member.name == entityName; });
+    std::erase_if(assets.redirects, [&](const mods::AssetRedirect& redirect) { return redirect.path == entityName; });
+    mods::AssetMember entity;
+    entity.name = entityName;
+    entity.generated = std::make_shared<const std::string>(bent);
+    members.push_back(std::move(entity));
+    for (auto& member : members) assets.members.push_back(std::move(member));
+    std::sort(assets.members.begin(), assets.members.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+    return added;
 }
 }

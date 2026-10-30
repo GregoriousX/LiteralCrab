@@ -335,6 +335,11 @@ void prepareCustomTools(mods::AssetIndex& assets,const std::wstring& root,std::v
             if(!t.assetDirectory.empty()) preparePrivateAssetDirectory(pendingAssets,t.modPath,t.assetDirectory,"tools/"+lower(t.table.id),t.assetAliases);
             NativeCatalog catalog(pendingAssets,root);
             resolveCustomTool(catalog,readToolTable(table),t,messages);
+            // Best effort: without the weapons table the tool's Fire stays an extra sound.
+            if(!t.weaponSource.empty()) try {
+                if(const auto* rows=catalog.weapons().table("weapon")) for(const auto& [_,row]:rows->indices)
+                    if(row.isTable()&&lower(row.table->text("name"))==lower(t.weaponSource)) t.fireSound=row.table->text("fireSound");
+            } catch(const std::exception&) {}
             const auto candidate=extendToolTable(table,{t.table});const auto entry=info(candidate,t.table.id,t.sourceActor);
             if(!t.weaponSource.empty()&&entry.group!="Items") throw std::runtime_error("WeaponSource is supported only for Items");
             if(t.equip) for(auto sku:t.targetSkus) if(equipped.contains({sku,entry.group}))

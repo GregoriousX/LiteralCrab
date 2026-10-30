@@ -31,6 +31,11 @@ void setCustomAudioPaused(bool paused) noexcept;
 bool customAudioPlaybackSuspended() noexcept;
 bool customAudioVoiceActive(std::uint32_t owner) noexcept;
 void updateCustomAudioPosition(std::uint32_t owner,const float* position) noexcept;
+// A native event a custom character or tool plays may belong to a bank the game loaded without
+// its waves (a character picked mid-game gets its banks' events but not their samples). Queues
+// the event's group: on the audio thread its sample data is loaded once, so the event and its
+// group's other events (a gun's shot and impact) become audible. Unknown names are ignored.
+void requestNativeEventData(const char* event) noexcept;
 // Diagnostic read of FMOD listener 0, as last set by the game's camera.
 bool customAudioListener(float (&position)[3]) noexcept;
 void removeCustomAudioPlayback() noexcept;

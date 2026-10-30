@@ -31,6 +31,7 @@ NativeActive soundActive{};
 ActorData actorData{};void** actorManager{};const std::uint16_t* positionType{};
 void** manager{};const std::uint16_t* toolType{};
 void* effectHook{};void* playHook{};
+void* queueTarget{};
 std::vector<AudioProfile> profiles;
 struct Scope {std::vector<std::string> characters;};
 std::vector<Scope> scopes;
@@ -43,6 +44,10 @@ std::map<std::string,Request,std::less<>> markers;
 std::map<std::string,std::vector<Request>,std::less<>> messageCues;
 bool messageRoutingEnabled{};
 std::atomic<unsigned> messageReports{};
+// [Gameplay] TraceCharacterFreedom: names of native sound events custom owners play, with the
+// native result, so a mod can name them in Replace.<event> (bounded per session).
+bool traceSounds{};
+std::atomic<unsigned> soundReports{};
 void prepareMessageCues() {
     messageCues.clear();
     for (std::size_t p=0;p<profiles.size();++p) for (std::size_t c=0;c<profiles[p].cues.size();++c) {
@@ -169,6 +174,38 @@ const Player* context(std::size_t profile,std::uint32_t handle,const Players& pl
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
     return nullptr;
 }
+// A tool's Replace cues also cover what its shots set off (a projectile's impact effect plays
+// its own event, not the tool's): any non-player actor's event while a player holds the tool.
+std::uint32_t held(std::size_t profile,const Players& players) noexcept {
+    if (profile>=profiles.size() || !profiles[profile].tool) return 0;
+    const auto& p=profiles[profile];
+    __try {
+        for (const auto& player : players) {
+            if (!player.handle || !player.identity[0] || !player.tools) continue;
+            if (std::none_of(scopes[profile].characters.begin(),scopes[profile].characters.end(),
+                    [&](const auto& name){return equal(player.identity,name);})) continue;
+            const auto* memory=static_cast<const unsigned char*>(player.tools);
+            const auto count=*reinterpret_cast<const unsigned*>(memory+0x2C0);
+            auto* const* entries=*reinterpret_cast<unsigned char* const* const*>(memory+0x2BC);
+            if (!entries || count>512) continue;
+            for (unsigned i=0;i<count;++i) {
+                auto* entry=entries[i];if (!entry) continue;
+                const auto childrenCount=*reinterpret_cast<const unsigned*>(entry+8);
+                auto* const* children=*reinterpret_cast<unsigned char* const* const*>(entry+4);
+                if (!children || childrenCount>64) continue;
+                // The held tool actor's handle: emit() resolves a tool request through context(),
+                // which matches that handle, not the holder's.
+                for (unsigned child=0;child<childrenCount;++child) if (children[child] &&
+                    equal(*reinterpret_cast<const char* const*>(children[child]+0xC),p.actor)) {
+                    const auto handle=*reinterpret_cast<const std::uint32_t*>(children[child]+0x5C);
+                    if (handle) return handle;
+                }
+            }
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return 0;
+}
+std::atomic<unsigned> effectReports{};
 void enqueue(Request request) noexcept {
     AcquireSRWLockExclusive(&queueLock);
     if (queued<requests.size()) requests[queued++]=request;
@@ -210,15 +247,65 @@ std::uint32_t* __cdecl soundPlay(std::uint32_t* result,const char* event,const v
     char name[160]{};Players players;
     if (result && gameplay() && copyName(event,name,sizeof(name)) && snapshots(players)) {
         const auto handle=actorHandle(actor);
-        bool replaced{};
-        for (std::size_t p=0;p<profiles.size();++p) if (context(p,handle,players))
+        bool replaced{},owned{};
+        for (std::size_t p=0;p<profiles.size();++p) if (context(p,handle,players)) {
+            owned=true;
             for (std::size_t c=0;c<profiles[p].cues.size();++c) {
                 const auto& cue=profiles[p].cues[c];
                 if (cue.replace && cue.trigger==name) {enqueue({p,c,handle});replaced=true;}
             }
+        }
+        // A custom owner's native event: its group's waves are loaded once, also when the event
+        // itself is replaced, so the group's other events (a projectile's impact) are heard.
+        if (owned) requestNativeEventData(name);
         if (replaced) {*result=~0u;return result;}
+        if (traceSounds && !owned) {
+            // Other actors' events, each name once: what a custom tool's shots set off.
+            static std::array<std::array<char,96>,96> seen{};
+            static std::size_t count{};
+            bool known{};
+            for (std::size_t i=0;i<count && !known;++i) known=!std::strcmp(seen[i].data(),name);
+            if (!known && count<seen.size()) {
+                strncpy_s(seen[count].data(),seen[count].size(),name,_TRUNCATE);++count;
+                log("Custom audio trace: native event %s actor=%08X (not a custom owner).",name,handle);
+            }
+        }
+        if (traceSounds) {
+            if (owned) {
+                auto* played=originalPlay(result,event,actor,volume,pitch);
+                if (soundReports.fetch_add(1,std::memory_order_relaxed)<64)
+                    log("Custom audio trace: native event %s owner=%08X result=%08X.",name,handle,played?*played:0u);
+                return played;
+            }
+        }
     }
     return originalPlay(result,event,actor,volume,pitch);
+}
+// Every named Sound::Play variant (actor, position, plain, motion events) queues its request
+// through one helper (PC RVA 0x31B020, Wii U Sound::InternalAPI::Play). Effects such as a
+// projectile's impact come only this way; a tool's Replace cue for such an event plays the mod's
+// clip at its holder instead, and the native request is not queued (callers accept null).
+using SoundQueue=void*(__thiscall*)(void*,const char*,void*,void*);
+SoundQueue originalQueue{};void* queueHook{};
+void* __fastcall soundQueue(void* self,void*,const char* event,void* second,void* descriptor) {
+    char name[160]{};Players players;
+    if (gameplay() && copyName(event,name,sizeof(name)) && snapshots(players)) {
+        bool replaced{};
+        for (std::size_t p=0;p<profiles.size();++p) {
+            if (!profiles[p].tool) continue;
+            bool matching{};
+            for (const auto& cue : profiles[p].cues) matching=matching || (cue.replace && cue.trigger==name);
+            if (!matching) continue;
+            const auto holder=held(p,players);
+            if (!holder) continue;
+            for (std::size_t c=0;c<profiles[p].cues.size();++c)
+                if (profiles[p].cues[c].replace && profiles[p].cues[c].trigger==name) {enqueue({p,c,holder});replaced=true;}
+            if (replaced && effectReports.fetch_add(1,std::memory_order_relaxed)<4)
+                log("Custom audio: %s from a %s shot/effect replaced.",name,profiles[p].identity.c_str());
+        }
+        if (replaced) return nullptr;
+    }
+    return originalQueue(self,event,second,descriptor);
 }
 void release(NativeVoice& voice) noexcept {
     if (voice.handle!=~0u && killSound) {
@@ -389,15 +476,24 @@ bool installCustomAudio(HMODULE host,std::vector<AudioProfile> input,const std::
     auto* target=reinterpret_cast<void*>(base+0xB20C40);
     if (MH_CreateHook(target,reinterpret_cast<void*>(&soundEffect),reinterpret_cast<void**>(&originalEffect))!=MH_OK) {removeCustomAudio();return false;}
     effectHook=target;
-    const bool replacements=std::any_of(profiles.begin(),profiles.end(),[](const auto& p){return std::any_of(p.cues.begin(),p.cues.end(),[](const auto& c){return c.replace;});});
-    if (replacements) {
-        target=reinterpret_cast<void*>(base+0x31BD30);
-        if (MH_CreateHook(target,reinterpret_cast<void*>(&soundPlay),reinterpret_cast<void**>(&originalPlay))!=MH_OK) {removeCustomAudio();return false;}
-        playHook=target;
+    traceSounds=config().traceCharacterFreedom;soundReports.store(0,std::memory_order_relaxed);
+    // The sound-play hook serves Replace cues and lets custom owners' native events load their group's waves.
+    target=reinterpret_cast<void*>(base+0x31BD30);
+    if (MH_CreateHook(target,reinterpret_cast<void*>(&soundPlay),reinterpret_cast<void**>(&originalPlay))!=MH_OK) {removeCustomAudio();return false;}
+    playHook=target;
+    // Shots' effects (impacts) reach only the common queue helper; hooked only for tool Replace cues.
+    const bool toolReplacements=std::any_of(profiles.begin(),profiles.end(),[](const auto& p){
+        return p.tool && std::any_of(p.cues.begin(),p.cues.end(),[](const auto& c){return c.replace;});});
+    if (toolReplacements) {
+        if (codeMatches(base+0x31B020,"83 EC 0C 57 8B F9 E8") && codeMatches(base+0x31B18E,"C2 0C 00") &&
+            callsTo(base,0x31B1D8,0x31B020) && callsTo(base,0x31B37B,0x31B020) && callsTo(base,0x31B54D,0x31B020)) {
+            queueTarget=reinterpret_cast<void*>(base+0x31B020);
+            if (MH_CreateHook(queueTarget,reinterpret_cast<void*>(&soundQueue),reinterpret_cast<void**>(&originalQueue))!=MH_OK) queueTarget=nullptr;
+        } else log("Custom audio: sound queue profile differs; tool Replace covers only the tool's own sounds.");
     }
     if (!installCustomAudioPlayback(host,&audioTick) || MH_EnableHook(effectHook)!=MH_OK ||
-        (playHook && MH_EnableHook(playHook)!=MH_OK)) {removeCustomAudio();return false;}
-    previousWall=0;gameplayTime=0;emitted=errors=spatialReports=0;messageReports.store(0,std::memory_order_relaxed);policy.clear();clearQueue();
+        (playHook && MH_EnableHook(playHook)!=MH_OK) || (queueTarget && MH_EnableHook(queueTarget)!=MH_OK)) {removeCustomAudio();return false;}
+    previousWall=0;gameplayTime=0;emitted=errors=spatialReports=0;messageReports.store(0,std::memory_order_relaxed);effectReports.store(0,std::memory_order_relaxed);policy.clear();clearQueue();
     previousPlayers={};places={};
     log("Custom audio: %u private effects/voice profile(s); cutscene audio preserved.",static_cast<unsigned>(profiles.size()));
     return true;
@@ -405,6 +501,7 @@ bool installCustomAudio(HMODULE host,std::vector<AudioProfile> input,const std::
 void removeCustomAudio() noexcept {
     if (effectHook) {MH_DisableHook(effectHook);MH_RemoveHook(effectHook);effectHook=nullptr;}
     if (playHook) {MH_DisableHook(playHook);MH_RemoveHook(playHook);playHook=nullptr;}
+    if (queueTarget) {MH_DisableHook(queueTarget);MH_RemoveHook(queueTarget);queueTarget=nullptr;}
     messageRoutingEnabled=false;messageCues.clear();
     clearQueue();stopNative();removeCustomAudioPlayback();profiles.clear();scopes.clear();markers.clear();policy.clear();
     originalEffect=nullptr;originalPlay=nullptr;manager=nullptr;toolType=nullptr;

@@ -10,6 +10,10 @@ namespace crabe::di1 {
 std::string customAudioMarker(std::size_t profile, std::size_t cue);
 std::string customAudioDnaPatch(const AudioProfile& profile, std::size_t index);
 std::string customAudioMessage(const AudioProfile& profile, const AudioCue& cue);
+// A tool cloned from a native gun keeps that gun's shot event. Its effects Fire cue becomes the
+// replacement of that event, so a shot plays only the mod's clip, also where the native bank is
+// loaded without its waves. An explicit Replace of the same event wins. Returns cues converted.
+std::size_t bindToolFireSounds(std::vector<AudioProfile>& profiles, const std::vector<CustomTool>& tools);
 std::string customAudioBankPatch(const std::vector<AudioProfile>& profiles);
 void addCustomAudioPatches(mods::Index& index, const std::vector<AudioProfile>& profiles, bool nativeMessages = false);
 // Observe the game's existing actor dispatch without changing its result/data.

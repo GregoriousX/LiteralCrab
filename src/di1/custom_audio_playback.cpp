@@ -5,6 +5,8 @@
 #include <cstring>
 #include <limits>
 #include <atomic>
+#include <string>
+#include <vector>
 #ifndef LITERALCRAB_AUDIO_PLAYBACK_TESTS
 #include "di1/common.hpp"
 #include "minhook/MinHook.h"
@@ -169,6 +171,28 @@ unsigned hooksCreated{};
 CustomAudioTick tickCallback{};
 audio_playback_detail::Mixer mixer;
 audio_playback_detail::Api api;
+// FMOD Ex 4.44 event C API (F_API = __stdcall); resolved with the mixer's exports.
+struct EventDataApi {
+    int (__stdcall* project)(void*, int, void**){};          // FMOD_EventSystem_GetProjectByIndex
+    int (__stdcall* projectGroups)(void*, int*){};           // FMOD_EventProject_GetNumGroups
+    int (__stdcall* projectGroup)(void*, int, int, void**){}; // FMOD_EventProject_GetGroupByIndex
+    int (__stdcall* groupGroups)(void*, int*){};             // FMOD_EventGroup_GetNumGroups
+    int (__stdcall* groupGroup)(void*, int, int, void**){};   // FMOD_EventGroup_GetGroupByIndex
+    int (__stdcall* groupEvent)(void*, const char*, unsigned, void**){}; // FMOD_EventGroup_GetEvent
+    int (__stdcall* loadData)(void*, int, unsigned){};       // FMOD_EventGroup_LoadEventData
+    int (__stdcall* projectInfo)(void*, void*){};            // FMOD_EventProject_GetInfo (diagnostics)
+} eventData;
+bool eventDataReady{};
+constexpr unsigned eventInfoOnly = 0x4;   // FMOD_EVENT_INFOONLY
+constexpr int streamsAndSamples = 0;      // FMOD_EVENT_RESOURCE_STREAMS_AND_SAMPLES
+SRWLOCK eventLock = SRWLOCK_INIT;
+std::array<std::array<char, 96>, 8> pendingEvents{};
+std::size_t pendingCount{};
+// Per bound event system: names whose group waves were loaded, and lookups still failing (a bank
+// a swap just requested may load a moment after the first play), retried up to a limit.
+std::vector<std::string> requestedEvents;
+std::vector<std::pair<std::string, unsigned>> missingEvents;
+constexpr unsigned eventRetries = 40;
 bool exportsReady{}, failureLogged{};
 std::atomic<bool> gameSuspended{true};
 template<class T> bool symbol(HMODULE module, const char* name, T& value) {
@@ -198,14 +222,79 @@ bool resolveApi() {
         symbol(core, "FMOD_ChannelGroup_GetPaused", api.groupPaused) &&
         symbol(core, "FMOD_ChannelGroup_GetParentGroup", api.parentGroup);
     symbol(core, "FMOD_System_Get3DListenerAttributes", api.listener);
+    eventDataReady = symbol(events, "FMOD_EventSystem_GetProjectByIndex", eventData.project) &&
+        symbol(events, "FMOD_EventProject_GetNumGroups", eventData.projectGroups) &&
+        symbol(events, "FMOD_EventProject_GetGroupByIndex", eventData.projectGroup) &&
+        symbol(events, "FMOD_EventGroup_GetNumGroups", eventData.groupGroups) &&
+        symbol(events, "FMOD_EventGroup_GetGroupByIndex", eventData.groupGroup) &&
+        symbol(events, "FMOD_EventGroup_GetEvent", eventData.groupEvent) &&
+        symbol(events, "FMOD_EventGroup_LoadEventData", eventData.loadData);
+    symbol(events, "FMOD_EventProject_GetInfo", eventData.projectInfo);
     exportsReady = complete;
     return complete;
+}
+// Depth-first search of one group tree for the event; loads the owning group's waves.
+bool loadEventGroup(void* group, const char* name, int depth) {
+    void* event{};
+    if (!eventData.groupEvent(group, name, eventInfoOnly, &event) && event)
+        return !eventData.loadData(group, streamsAndSamples, 0);
+    int count{};
+    if (depth > 8 || eventData.groupGroups(group, &count)) return false;
+    for (int i = 0; i < count && i < 512; ++i) {
+        void* child{};
+        if (!eventData.groupGroup(group, i, 0, &child) && child && loadEventGroup(child, name, depth + 1)) return true;
+    }
+    return false;
+}
+void loadPendingEvents(void* events) {
+    std::array<std::array<char, 96>, 8> names{};
+    std::size_t count{};
+    AcquireSRWLockExclusive(&eventLock);
+    names = pendingEvents; count = pendingCount; pendingCount = 0;
+    ReleaseSRWLockExclusive(&eventLock);
+    if (!count || !eventDataReady) return;
+    for (std::size_t n = 0; n < count; ++n) {
+        const char* name = names[n].data();
+        if (std::find(requestedEvents.begin(), requestedEvents.end(), name) != requestedEvents.end()) continue;
+        auto missing = std::find_if(missingEvents.begin(), missingEvents.end(), [&](const auto& m) { return m.first == name; });
+        if (missing != missingEvents.end() && missing->second >= eventRetries) continue;
+        bool loaded{};
+        std::string projects;
+        for (int p = 0; p < 64 && !loaded; ++p) {
+            void* project{};
+            if (eventData.project(events, p, &project) || !project) break;
+            if (eventData.projectInfo && projects.size() < 600) {
+                // FMOD_EVENT_PROJECTINFO: int index, then char name[256]; the rest stays zero.
+                alignas(8) std::array<char, 4096> info{};
+                if (!eventData.projectInfo(project, info.data())) projects += std::string(info.data() + 4, strnlen(info.data() + 4, 255)) + " ";
+            }
+            int groups{};
+            if (eventData.projectGroups(project, &groups)) continue;
+            for (int g = 0; g < groups && g < 512 && !loaded; ++g) {
+                void* group{};
+                if (!eventData.projectGroup(project, g, 0, &group) && group) loaded = loadEventGroup(group, name, 0);
+            }
+        }
+        if (loaded) {
+            if (requestedEvents.size() < 256) requestedEvents.emplace_back(name);
+            if (missing != missingEvents.end()) missingEvents.erase(missing);
+            log("Custom audio: native event %s group waves loaded.", name);
+            continue;
+        }
+        if (missing == missingEvents.end()) {
+            if (missingEvents.size() >= 256) continue;
+            missingEvents.emplace_back(name, 0u); missing = missingEvents.end() - 1;
+        }
+        if (++missing->second == 1 || missing->second == eventRetries)
+            log("Custom audio: native event %s not in a loaded bank yet (attempt %u; projects: %s).", name, missing->second, projects.c_str());
+    }
 }
 int __stdcall audioUpdate(void* events) {
     const int result = originalUpdate(events);
     const auto error = GetLastError();
     if (!result) {
         if (resolveApi() && mixer.bind(events, api)) {
+            loadPendingEvents(events);
             mixer.update();
             gameSuspended.store(mixer.suspended(),std::memory_order_relaxed);
             if (tickCallback) tickCallback();
@@ -219,6 +308,8 @@ int __stdcall audioUpdate(void* events) {
 }
 int __stdcall audioRelease(void* events) {
     gameSuspended.store(true,std::memory_order_relaxed);
+    requestedEvents.clear();
+    missingEvents.clear();
     if (mixer.events() == events) mixer.unbind();
     return originalRelease(events);
 }
@@ -256,6 +347,18 @@ bool playCustomAudio(std::uint32_t owner, std::shared_ptr<const std::string> byt
     return mixer.play(owner, std::move(bytes), bus, volume, space);
 }
 void stopCustomAudio(std::uint32_t owner) noexcept { mixer.stopOwner(owner); }
+void requestNativeEventData(const char* event) noexcept {
+    if (!event) return;
+    std::array<char, 96> name{};
+    std::size_t length{};
+    while (event[length] && length + 1 < name.size()) { name[length] = event[length]; ++length; }
+    if (!length || event[length]) return;
+    AcquireSRWLockExclusive(&eventLock);
+    bool queued{};
+    for (std::size_t i = 0; i < pendingCount; ++i) queued = queued || !std::strcmp(pendingEvents[i].data(), name.data());
+    if (!queued && pendingCount < pendingEvents.size()) pendingEvents[pendingCount++] = name;
+    ReleaseSRWLockExclusive(&eventLock);
+}
 void stopAllCustomAudio() noexcept { mixer.stopAll(); }
 void setCustomAudioPaused(bool value) noexcept { mixer.pause(value); }
 bool customAudioPlaybackSuspended() noexcept {return gameSuspended.load(std::memory_order_relaxed);}

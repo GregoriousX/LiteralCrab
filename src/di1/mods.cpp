@@ -9,6 +9,7 @@
 #include "di1/character_freedom_policy.hpp"
 #include "di1/character_targets.hpp"
 #include "di1/character_mods.hpp"
+#include "di1/character_model.hpp"
 #include "di1/character_gameplay.hpp"
 #include "di1/character_assets.hpp"
 #include "di1/character_loadout.hpp"
@@ -18,6 +19,9 @@
 #include "di1/common.hpp"
 #include "di1/gui_screens.hpp"
 #include "di1/toybox_share.hpp"
+#include "di1/toy_store_infinity.hpp"
+#include "di1/toy_store_water.hpp"
+#include "di1/native_catalog.hpp"
 #include "minhook/MinHook.h"
 #include "mods/file_redirect.hpp"
 #include "mods/lua_mods.hpp"
@@ -35,9 +39,20 @@ namespace crabe::di1 {
 namespace {
     using DictionaryText = const char*(__thiscall*)(void*, const char*, unsigned, unsigned);
     DictionaryText originalDictionaryText{};
+    bool toyStoreNames{};
+    struct DictionaryCall { void* self; unsigned first, second; };
+    const char* nativeDictionaryText(void* context, const char* key) {
+        const auto* call = static_cast<const DictionaryCall*>(context);
+        return originalDictionaryText(call->self, key, call->first, call->second);
+    }
     const char* __fastcall scareDictionaryText(void* self, void*, const char* key, unsigned first, unsigned second) {
         if (const auto* text = customCharacterText(key)) return text;
         if (const auto* text = customToolText(key)) return text;
+        if (const auto* text = toyStoreInfinityText(key)) return text;
+        if (toyStoreNames) {
+            DictionaryCall call{self, first, second};
+            if (const auto* text = toyStoreToyText(key, &nativeDictionaryText, &call)) return text;
+        }
         return originalDictionaryText(self, scareToolLabelKey(key), first, second);
     }
     bool installScareLabel(HMODULE host) {
@@ -265,13 +280,60 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
 
     template <class T> void bind(T& slot, std::uintptr_t address) { slot = reinterpret_cast<T>(address); }
 
+    // Toy Store Infinity's Toy Box data, read from the effective files while they are indexed.
+    void prepareToyStore(mods::AssetIndex& assets, const std::wstring& gameAssets, std::vector<std::string>& messages) {
+        if (!config().toyStoreInfinity) return;
+        try {
+            NativeCatalog catalog(assets, gameAssets);
+            setToyStoreData(readToyStoreData(catalog, messages));
+        } catch (const std::exception& error) {
+            messages.push_back(std::string("ToyStore: other worlds' vehicles unavailable: ") + error.what());
+        }
+        // Pirates has no object package; give it an empty one for the object patch to fill.
+        if (!assets.member(toyStorePiratesObjectsPath)) {
+            mods::AssetMember member;
+            member.name = std::string(toyStorePiratesObjectsPath);
+            member.generated = std::make_shared<const std::string>(toyStorePiratesObjects);
+            assets.members.push_back(std::move(member));
+            std::sort(assets.members.begin(), assets.members.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+        }
+        // A character's play set entity (characters/x/x_ps) rides only its own world's toys.
+        std::size_t completed{};
+        std::string failed;
+        WIN32_FIND_DATAW found{};
+        const auto search = FindFirstFileExW((gameAssets + L"\\characters\\*").c_str(), FindExInfoBasic, &found,
+            FindExSearchLimitToDirectories, nullptr, 0);
+        if (search == INVALID_HANDLE_VALUE) return;
+        std::vector<std::wstring> folders;
+        do if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && found.cFileName[0] != L'.') folders.emplace_back(found.cFileName);
+        while (FindNextFileW(search, &found));
+        FindClose(search);
+        for (const auto& folder : folders) {
+            const auto stem = gameAssets + L"\\characters\\" + folder + L"\\" + folder;
+            if (GetFileAttributesW((stem + L"_ps.zip").c_str()) == INVALID_FILE_ATTRIBUTES ||
+                GetFileAttributesW((stem + L".zip").c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+            std::string name;
+            for (const auto c : folder) name += c < 128 ? static_cast<char>(c) : '?';
+            try {
+                NativeCatalog catalog(assets, gameAssets);
+                const auto model = "characters/" + lowerPath(name) + "/" + lowerPath(name);
+                if (!completePlaysetRides(catalog, assets, model + "_ps", model).empty()) ++completed;
+            } catch (const std::exception& error) {
+                if (failed.empty()) failed = name + " (" + error.what() + ")";
+            }
+        }
+        messages.push_back("ToyStore: ride and drive animations added to " + std::to_string(completed) + " play set characters" +
+            (failed.empty() ? "." : "; first skipped: " + failed + "."));
+    }
+
     void installAssets(HMODULE host, const std::wstring& modsRoot, const std::vector<mods::Mod>& list,
         std::vector<CustomFigure>& figures, std::vector<CustomTool>& tools, std::vector<std::string>& messages) {
         const bool trace = config().modTrace;
         wchar_t executable[32768]{};
         const auto length = GetModuleFileNameW(host, executable, 32768);
         const wchar_t* slash = length && length < 32768 ? wcsrchr(executable, L'\\') : nullptr;
-        if (list.empty() || !slash) {
+        // Toy Store Infinity serves completed play set entities even without mods.
+        if ((list.empty() && !config().toyStoreInfinity) || !slash) {
             figures.clear();
             tools.clear();
             if (trace || config().traceCharacterFreedom) installAssetLoader(host, nullptr, trace);
@@ -284,6 +346,7 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         prepareCustomTools(assets, gameAssets, tools, figures, messages);
         prepareCustomCharacterGameplay(assets, gameAssets, figures, messages);
         prepareCustomCharacterAssets(assets, gameAssets, figures, messages);
+        prepareToyStore(assets, gameAssets, messages);
         std::erase_if(tools,[&](CustomTool& t) {
             std::erase_if(t.targetSkus,[&](auto sku) {return std::none_of(figures.begin(),figures.end(),[&](const auto& f){return f.sku==sku;});});
             return t.targetSkus.empty();
@@ -322,8 +385,9 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
 bool installMods(HMODULE host) {
     const auto& settings = config();
     if (!settings.mods) {
-        log("Mods: disabled by configuration.%s%s", settings.toyBoxLimitScale > 1 ? " ToyBox LimitScale needs [Mods] Enabled=1." : "",
-            toyBoxShareActive() ? " The Toy Box Share entry needs [Mods] Enabled=1." : "");
+        log("Mods: disabled by configuration.%s%s%s", settings.toyBoxLimitScale > 1 ? " ToyBox LimitScale needs [Mods] Enabled=1." : "",
+            toyBoxShareActive() ? " The Toy Box Share entry needs [Mods] Enabled=1." : "",
+            settings.toyStoreInfinity ? " ToyStore Infinity needs [Mods] Enabled=1." : "");
         return true;
     }
     if (!*pluginDirectory()) return false;
@@ -360,7 +424,9 @@ bool installMods(HMODULE host) {
         addCustomGameplayPatches(index, figures);
         addCustomAssetPatches(index, figures);
         addCustomToolPatches(index, tools);
-        const auto audio=loadCustomAudio(index.mods,figures,tools,messages);
+        auto audio=loadCustomAudio(index.mods,figures,tools,messages);
+        if (const auto fires=bindToolFireSounds(audio,tools))
+            messages.push_back("Custom audio: "+std::to_string(fires)+" tool Fire sound(s) replace the cloned gun's native shot.");
         if (!audio.empty()) {
             if (installCustomAudio(host,audio,figures,tools)) {
                 const bool observed=installActorMessageObserver(host);
@@ -430,6 +496,35 @@ bool installMods(HMODULE host) {
         }
         if (toyBoxShareActive())
             index.addBuiltinPatch({"presentation/toyboxselectmenu.lua"}, "toybox_share", std::string(toyBoxShareMenuPatch), "{}");
+        if (settings.toyStoreInfinity) {
+            if (installScareLabel(host)) {
+                index.addBuiltinPatch({"presentation/pausemenu.lua"}, "toy_store_infinity_pause",
+                    std::string(toyStoreInfinityMenuPatch), "{Kiosk=false}");
+                index.addBuiltinPatch({"presentation/selectmenu.lua"}, "toy_store_infinity_kiosk",
+                    std::string(toyStoreInfinityMenuPatch), "{Kiosk=true}");
+                index.addBuiltinPatch({"presentation/catalog.lua"}, "toy_store_infinity",
+                    std::string(toyStoreInfinityCatalogPatch), toyStoreCatalogOptions(settings.toyStoreInfinityAll));
+                if (const auto objects = toyStoreObjectOptions(); !objects.empty())
+                    index.addBuiltinPatch({"rumpusdata.lua", "contains:DBName = \"RumpusData\""},
+                        "toy_store_infinity_objects", std::string(toyStoreInfinityObjectsPatch), objects);
+                if (const auto files = toyStoreDependencyOptions(); !files.empty())
+                    index.addBuiltinPatch({"coredatamap.lua", "contains:_loadforallplaysets_"},
+                        "toy_store_infinity_dependencies", std::string(toyStoreInfinityDependenciesPatch), files);
+                index.addBuiltinPatch({"piratesdatamap.lua", "contains:GameDB/Pirates/rc_catalog__lua.lua"},
+                    "toy_store_infinity_pirates", std::string(toyStoreInfinityPiratesPatch), "{}");
+                index.addBuiltinPatch({"avatar.btx", "characters/avatar.btx", "contains:Apply_PerceptionMode"},
+                    "toy_store_infinity_riding", std::string(toyStoreInfinityRidingPatch), "{}");
+                // A custom figure's private respawn tree is a named chunk, out of content targets' reach.
+                for (const auto& f : figures) if (!f.gameplay.respawnBehavior.empty())
+                    index.addBuiltinPatch({"LiteralCrabRespawn:" + f.name}, "toy_store_infinity_riding_" + f.name,
+                        std::string(toyStoreInfinityRidingPatch), "{}");
+                if (installToyStoreWater(reinterpret_cast<std::uintptr_t>(host)))
+                    log("ToyStore: vehicles that fall into Pirates' sea sink and respawn natively.");
+                else log("ToyStore: vehicle/ocean signature differs; vehicles keep driving on Pirates' sea.");
+                toyStoreNames = true;
+                log("ToyStore: Toy Store Infinity enabled (%s).", settings.toyStoreInfinityAll ? "all toys" : "unlocked toys");
+            } else log("ToyStore: localized label hook differs; Toy Store Infinity left off.");
+        }
         if (settings.toyBoxLimitScale > 1)
             index.addBuiltinPatch({"toyboxstats_limits.lua", "contains:ToyBoxLimits ="}, "toybox_limits", std::string(toyBoxLimitsPatch),
                 "{Scale=" + std::to_string(settings.toyBoxLimitScale) + "}");

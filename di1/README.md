@@ -34,12 +34,19 @@ ReturnDelay=default
 [Controller]
 SwapXY=0
 
+[SplitScreen]
+Enabled=0
+
 [ToyBox]
 LimitScale=1
 
 [Gameplay]
 CharactersInAnyPlayset=0
 ToolsInAnyPlayset=0
+
+[ToyStore]
+Infinity=0
+InfinityAll=0
 
 [ToyBoxes]
 Enabled=0
@@ -76,9 +83,12 @@ Trace=0
 | `[PostProcessing]` `Bloom` | `1` | `0` removes the glow around bright lights, the sky and shiny surfaces. |
 | `[Camera]` `ReturnDelay` | `default` | Seconds the camera waits after you turn it before it swings back behind the character, for every camera: `0` returns at once, `5` waits five seconds (up to `3600`). `default` keeps each camera's own timing. |
 | `[Controller]` `SwapXY` | `0` | `1` exchanges the X and Y buttons of Xbox-compatible (XInput) controllers everywhere in the game. On-screen prompts keep the original letters. |
+| `[SplitScreen]` `Enabled` | `0` | Experimental. `1` restores the consoles' local two-player drop-in: START on a second Xbox-compatible controller asks the game to add player 2, and the game's own drop-in rules, popups and portal figure apply. The keyboard never joins. |
 | `[ToyBox]` `LimitScale` | `1` | Multiplies the Toy Box editor's limits (its "memory" meter): object costs, measured memory and frame time. `4` is generous, `10` very high, up to `100`. Very large Toy Boxes can still slow down or run out of memory. Needs `[Mods] Enabled=1`. |
 | `[Gameplay]` `CharactersInAnyPlayset` | `0` | `1` lets every character play in every play set. Visitors use their base actor, all avatar dependency maps are loaded, and tool/motion effects are enabled. Player tool selection and unlocked, unsuppressed personal equipment (such as Buzz's innate Pixar Ball) can cross playset zone restrictions. Shared Toy Box/shop equipment retains its native world filters unless `ToolsInAnyPlayset=1`. Native character rosters, character swaps, unlocks and Cars race rules are preserved; six biped progression filters accept visitors. Changes are in memory only. Needs `[Mods] Enabled=1`. See the [repair notes and testing status](CHARACTER_FREEDOM_FIX.en.md). |
 | `[Gameplay]` `ToolsInAnyPlayset` | `0` | `1` lets existing tools and packs cross playset world filters after the game allows their use through native unlock/upgrade checks. Requires `CharactersInAnyPlayset=1` and `[Mods] Enabled=1`; otherwise inactive. Does not grant equipment, purchases or progression. Character conditions, suppression and action restrictions remain native. |
+| `[ToyStore]` `Infinity` | `0` | `1` adds **Toy Store Infinity** to the play set pause menu and to the Infinity kiosk, next to the Toy Store: the unlocked vehicles and mounts of every world, placed beside you for free. See [Toy Store Infinity](#toy-store-infinity). Needs `[Mods] Enabled=1`. |
+| `[ToyStore]` `InfinityAll` | `0` | `1` also lists the locked vehicles and mounts in Toy Store Infinity. Requires `Infinity=1`. |
 | `[ToyBoxes]` `Enabled` | `0` | `1` restores **Toy Box Share** (Toy Box menu > Toy Box Share), the PC release's menu that Gold hides, with the Toy Boxes from the `toyboxes` folder beside the ASI. See [Toy Box Share](#toy-box-share). The menu entry needs `[Mods] Enabled=1`. |
 | `[ToyBoxes]` `Servers` | empty | **Experimental, not yet tested at a large scale; use at your own risk.** Web servers to mirror Toy Box packages from, separated by spaces: `http://` or `https://` folder URLs; their Toy Boxes are listed under "Disney's Toy Boxes". See [Toy Box Share](#toy-box-share). |
 | `[ToyBoxes]` `MaxToyBoxes` | `5000` | Most Toy Boxes listed, from `1` to `20000`; packages beyond the limit are not read. |
@@ -405,6 +415,22 @@ With `[ToyBoxes] Enabled=1` the Toy Box menu gets its **Toy Box Share** entry ba
 - **Damaged files** are skipped: every package and Toy Box is checked (ZIP checksums, the save checksums, the layout and the world it needs) before the game sees it, and `LiteralCrab.log` names what was skipped and why.
 - **Speed:** packages are converted once into `toyboxes\.cache` on a background thread; later starts reuse the cache and only read changed packages. While playing, nothing runs.
 - **Servers (experimental):** reading Toy Boxes from servers has not been tested at a large scale yet, so enable it at your own risk. `Servers=https://example.org/toyboxes/` or `Servers=localhost:8000` (several separated by spaces; `http://` when no scheme is given). A server lists its packages in an `index.txt` beside that URL, one path relative to it per line (any subfolders and names, `#` starts a comment), or simply shows a directory listing, which is followed into subfolders. Packages are mirrored into `toyboxes\.cache\servers` in the background: new and changed ones are downloaded, ones the server no longer lists are removed (an unreachable server keeps its copies). At startup the game waits up to 5 seconds for the servers; Toy Boxes that arrive later appear after the next save or start.
+
+## Toy Store Infinity
+
+With `[ToyStore] Infinity=1`, every play set gets a second Toy Store, **Toy Store Infinity**, in the pause menu (between the online and settings entries) and in the Infinity kiosk (below the Toy Store). It uses the Toy Store's own screen, icons and descriptions, so you can drive the Toy Box or another play set's car in Cars with your own character, or ride a horse in Pirates.
+
+- **What is listed:** vehicles and mounts, that is toys of the vehicle category or toys the game can summon, from every world: the Toy Box (Autopia Car, the Wreck-It Ralph karts, Tron, the stunt buggy and copters, the Incredibles car and copter, the Lone Ranger horses, Archie, Bullseye and so on) and the play sets (for example the Monsters University bikes). A play set loads only its own and the shared toy data, so LiteralCrab reads the other worlds' vehicles, their placeable-object rows, their behavior and animation dependencies (about 120 small files; the models still load only when placed) and their names from the game files at startup and adds them to the play set in memory; a model offered twice is listed once. Things that only work on a play set lot or socket (buildings, decorations, a ship's wheel, trains and tracks) and ordinary Toy Box toys are left out.
+- **Unlocked toys:** the Toy Box's are all unlocked in Gold; a play set's are listed once the game counts their recipe card as bought, exactly as tools unlocked in one world are usable in another: the card's state where the current world loads it, otherwise the card's lock, which the game answers from the player's profile for other worlds. `InfinityAll=1` also lists the locked ones.
+- **Names and descriptions** come from the game's own world dictionaries, in the language the game is using (recognised from the pause menu texts): whatever dictionary files are in effect, shipped or replaced by a language pack or loose files. A toy without a description in that language shows the English one, or none.
+- **Riding and driving:** a character's play set version only has the ride and drive animations of its own world (Mr. Incredible has no horse riding in the Incredibles). With Toy Store Infinity on, each character's play set version also gets the mount, bike, car, kart, rowboat and ship animations it lacks from that same character's Toy Box version, in memory and only when both use the same animation layout; animation mods for these characters are kept.
+- **Bikes everywhere:** the Monsters University bikes are mounted with the native interaction outside Monsters University too; their ride script and destruction models load with the other worlds' vehicles.
+- **Pirates' sea:** the sea has a water surface vehicles could drive on, while characters die in water triggers below it. A driven vehicle low on the water above such a trigger (or inside it) is now killed the way other worlds' water does, and its native respawn sets it back on land; rowboats and ships are untouched. Very close to the shore a bike can occasionally sink too.
+- **Free and temporary:** choosing *Place* puts the toy beside you, like the Toy Store does after a purchase. Nothing is bought, no sparks or coins are taken, recipe cards, "new" marks and inventory counts are untouched, and nothing is unlocked. Placed toys are not saved: the store places copies marked with the game's own "do not save" flag (`M_NoSave`, as on the Toy Box Buzz ride), so a play set save never depends on Toy Store Infinity.
+- **The ordinary Toy Store is unchanged,** and the entry is not offered outside play sets, during missions, activities or adventures.
+- **Pirates** has no placeable-object data of its own; Toy Store Infinity gives it an empty package in memory, filled like the others. `LiteralCrab.log` lists the store's toys and names what was placed.
+
+Po polsku: `[ToyStore] Infinity=1` dodaje w każdym playsecie drugi sklep, **Toy Store Infinity**, w menu pauzy i w kiosku Infinity (pod zwykłym Toy Store). Korzysta z ekranu, ikon i opisów zwykłego sklepu. Lista zawiera pojazdy i wierzchowce ze wszystkich światów: z Toy Boxa (Samochodzik z Autopii, wózki z Ralpha, Tron, auto i helikopter Iniemamocnych, konie z Lone Rangera, Archie, Bullseye itd.) i z playsetów (np. motory z Monsters University). Playset ładuje tylko własne i wspólne dane zabawek, więc LiteralCrab przy starcie czyta z plików gry pojazdy innych światów, ich definicje obiektów, zależności zachowań i animacji (około 120 małych plików; modele ładują się dopiero po postawieniu) oraz nazwy, i dodaje je w pamięci. Pojazdy Toy Boxa są w Gold odblokowane, pojazdy playsetów pojawiają się, gdy gra uznaje ich kartę za kupioną (tak jak narzędzia odblokowane w jednym świecie działają w innych: stan karty, a gdy świat jej nie ładuje, lock karty odczytany przez grę z profilu gracza); `InfinityAll=1` pokazuje też zablokowane. Nazwy i opisy pochodzą ze słowników gry w języku, którego gra używa (z plików, które obowiązują: oryginalnych, z pakietu językowego albo luźnych). Przedmioty działające tylko na działce lub gnieździe playsetu (budynki, dekoracje, ster statku, pociągi i tory) są pominięte. Postacie w swoim playsecie mają tylko animacje jazdy i prowadzenia z własnego świata (Mr. Incredible w Iniemamocnych nie umie jeździć konno), więc z włączonym Toy Store Infinity ich wersja playsetowa dostaje brakujące animacje (konie, rowery, auta, wózki, łódki, statki) z wersji Toy Boxa tej samej postaci, w pamięci; mody animacji tych postaci są zachowane. *Postaw* ustawia zabawkę obok gracza za darmo: nic nie jest kupowane ani odblokowywane, a karty, oznaczenia „nowe” i liczniki ekwipunku zostają bez zmian. Postawione zabawki nie trafiają do zapisu (sklep stawia kopie z natywną flagą „nie zapisuj” `M_NoSave`), więc zapis playsetu nigdy nie zależy od Toy Store Infinity. Piraci dostają w pamięci pusty pakiet obiektów, wypełniany jak w innych playsetach. Rowery z Monsters University można dosiąść także poza MU. Na morzu w Piratach prowadzony pojazd nisko nad wodą, nad strefą śmierci postaci, tonie i odradza się natywnie na lądzie (łódki i statki bez zmian; przy samym brzegu rower też może czasem zatonąć). Zwykły Toy Store działa jak dotąd.
 
 ## Frame-rate examples
 

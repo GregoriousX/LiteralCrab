@@ -41,6 +41,8 @@ public:
     // belong to the archive's folder.
     std::map<std::string, ArchiveEntry> members(std::string_view archivePath);
     const mods::AssetIndex& assets() const noexcept { return index; }
+    // The game's assets folder; empty in tests.
+    const std::wstring& gameAssets() const noexcept { return root; }
 private:
     const mods::AssetIndex& index;
     std::wstring root;

@@ -19,6 +19,8 @@ struct CustomTool {
     ResourceAliases assetAliases;
     std::vector<std::uint32_t> targetSkus;
     std::string privateDna, privateScript, privateWeapon, group;
+    // The cloned gun's native shot event (weapons.lua fireSound); its [Tool.Audio] Fire replaces it.
+    std::string fireSound;
     std::uint32_t row{}, hash{};
 };
 // One standalone [Tool] per enabled mod. The first implementation grants it to

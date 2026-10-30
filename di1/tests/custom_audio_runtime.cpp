@@ -149,6 +149,7 @@ bool playCustomAudio(std::uint32_t owner,std::shared_ptr<const std::string> byte
     ++customClips;return true;
 }
 void stopCustomAudio(std::uint32_t) noexcept {}
+void requestNativeEventData(const char*) noexcept {}
 void stopAllCustomAudio() noexcept {++stopped;}
 void setCustomAudioPaused(bool) noexcept {}
 bool customAudioPlaybackSuspended() noexcept {return false;}

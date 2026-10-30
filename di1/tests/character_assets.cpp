@@ -588,9 +588,47 @@ static void interactions() {
         CHECK(ownClip);
     }
 }
+// A play set entity gains the character's own ride/drive groups it lacks, nothing else.
+static void playsetRides() {
+    for (const bool sameChannels : {true, false}) {
+        AssetIndex assets;
+        generated(assets, "characters/hero/hero_ps.bent", entity("layer", {{"Core:BaseMobility", {{"IDLE", "motions/idle.oct"}}},
+            {"Mech:Bike", {{"BIKE", "motions/bike_ps.oct"}}}}));
+        generated(assets, "characters/hero/hero.bent", entity(sameChannels ? "layer" : "other", {
+            {"Core:BaseMobility", {{"IDLE", "motions/idle.oct"}}}, {"Core:Attacks", {{"ATTACK", "motions/a.oct"}}},
+            {"Mech:Bike", {{"BIKE", "motions/bike.oct"}}}, {"Mech:RideHorse", {{"RIDE", "../biped/motions/ride.oct"}}}}));
+        generated(assets, "characters/biped/motions/ride.oct", "ride");
+        assets.redirects.push_back({"characters/hero/hero_ps.bent", L"unused"});
+        NativeCatalog catalog(assets, L"");
+        const auto added = completePlaysetRides(catalog, assets, "characters/hero/hero_ps", "characters/hero/hero");
+        if (!sameChannels) {
+            CHECK(added.empty() && assets.redirects.size() == 1);
+            continue;
+        }
+        CHECK(added == std::vector<std::string>{"Mech:RideHorse"} && assets.redirects.empty());
+        const auto built = scene::decode(served(assets, "characters/hero/hero_ps.bent"));
+        std::vector<std::string> texts;
+        for (const auto& atom : built.atoms) if (scene::isText(atom)) texts.emplace_back(scene::text(built, atom));
+        CHECK(std::count(texts.begin(), texts.end(), "RIDE") == 1 && std::count(texts.begin(), texts.end(), "../biped/motions/ride.oct") == 1);
+        CHECK(std::count(texts.begin(), texts.end(), "ATTACK") == 0 && std::count(texts.begin(), texts.end(), "motions/bike_ps.oct") == 1);
+        // Nothing left to add: the completed entity stays as it is.
+        CHECK(completePlaysetRides(catalog, assets, "characters/hero/hero_ps", "characters/hero/hero").empty());
+    }
+    // A ride motion found nowhere stops the completion before anything is published.
+    AssetIndex assets;
+    generated(assets, "characters/hero/hero_ps.bent", entity("layer", {{"Core:BaseMobility", {{"IDLE", "motions/idle.oct"}}}}));
+    generated(assets, "characters/hero/hero.bent", entity("layer", {{"Core:BaseMobility", {{"IDLE", "motions/idle.oct"}}},
+        {"Mech:RideHorse", {{"RIDE", "motions/lost.oct"}}}}));
+    NativeCatalog catalog(assets, L"");
+    const auto before = served(assets, "characters/hero/hero_ps.bent");
+    bool rejected{};
+    try { completePlaysetRides(catalog, assets, "characters/hero/hero_ps", "characters/hero/hero"); }
+    catch (const std::exception&) { rejected = true; }
+    CHECK(rejected && served(assets, "characters/hero/hero_ps.bent") == before);
+}
 int main() {
     try {
-        skeletons(); interactions();
+        skeletons(); interactions(); playsetRides();
         Fixture fixture;
         isolatedMounts(fixture.root); textures(fixture.root); malformedMaterials(fixture.root);
         scripts(fixture.root); standaloneMounts(fixture.root);
