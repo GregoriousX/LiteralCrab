@@ -135,7 +135,21 @@ namespace {
     void traceToolState(void* tools, const char* stage, const char* requested = nullptr) noexcept;
     std::uint32_t componentActor(void* component) noexcept;
     bool playerInPlayset(std::uint32_t actor) noexcept;
-    bool pirateStoryFlintlock(const unsigned char* entry) noexcept;
+    // Tools the original toolset gives a play set's own figures without their upgrade (a NULL
+    // per-avatar prerequisite): Pirates' flintlock (Jack Sparrow, Barbossa, Davy Jones), Lone
+    // Ranger's pistol (Lone Ranger) and tomahawk (Tonto), Toy Story's Pixar ball (Buzz, Woody, Jessie).
+    // Violet's invisibility and the MU monsters' stealth are character powers; the Toy Box
+    // invisibility pack (a Toy Box-only row, hence foreignZone) stands in for visitors there.
+    struct StoryEquipment { const char* tool; const char* upgrade; const char* playset; bool foreignZone; };
+    constexpr StoryEquipment storyEquipment[] = {{"ITEM_FLINTLOCK", "UP_FlintLock", "Pirates", false},
+        {"ITEM_PISTOL", "UP_Pistol", "LoneRanger", false}, {"ITEM_TOMAHAWK", "UP_Tomahawk", "LoneRanger", false},
+        {"ITEM_PIXARBALL", "UP_PixarBalls", "ToyStoryInSpace", false},
+        {"PROP_INVISIBILITYPACK", "UP_InvisibilityPack", "Incredibles", true},
+        {"PROP_INVISIBILITYPACK", "UP_InvisibilityPack", "MonstersU", true}};
+    const StoryEquipment* playsetStoryEquipment(const unsigned char* entry, bool cached = false) noexcept;
+    // The entry whose prerequisite refreshStoryTool has cleared for one GetTool call.
+    thread_local const unsigned char* storyRefreshEntry{};
+    thread_local const StoryEquipment* storyRefresh{};
     template<std::size_t N> void copyTraceString(char (&out)[N], const char* value) noexcept;
     bool __fastcall traceToolAsset(void* self, void*, const char* name, std::uint32_t type) {
         const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
@@ -175,7 +189,7 @@ namespace {
             if (!entries || count > 512) return nullptr;
             for (unsigned i = 0; i < count; ++i) {
                 auto* entry = static_cast<unsigned char*>(entries[i]);
-                if ((!crossPlaysetTool(entry) && !pirateStoryFlintlock(entry)) || (entry[0x78] & 5) ||
+                if ((!crossPlaysetTool(entry) && !playsetStoryEquipment(entry)) || (entry[0x78] & 5) ||
                     !*reinterpret_cast<const void* const*>(entry + 0x24) ||
                     *reinterpret_cast<const int*>(entry + 0x70) != 0) continue;
                 const auto* toolName = *reinterpret_cast<const char* const*>(entry + 0x14);
@@ -239,7 +253,7 @@ namespace {
                             // Include unresolved override rows: their final name
                             // and zone list may not exist yet. Never force awards.
                             if (entry && !(entry[0x78] & 5) &&
-                                (sharedToolsAcrossPlaysets || pirateStoryFlintlock(entry))) refreshTool(entry, false);
+                                (sharedToolsAcrossPlaysets || playsetStoryEquipment(entry))) refreshTool(entry, false);
                         }
                     } __finally { refreshingToolAvailability = false; }
                 }
@@ -250,16 +264,17 @@ namespace {
     void __fastcall refreshStoryTool(void* self, void*, bool forced) {
         originalRefreshTool(self, forced);
         auto* entry = static_cast<unsigned char*>(self);
-        // Pirates' three native figures have an innate flintlock (no upgrade).
-        // Match that story equipment for registered visitors ONLY in Pirates.
-        // Keep the real upgrade pointer and all award/suppression bits intact;
-        // outside this world the normal UP_FlintLock requirement remains native.
-        if (!active || forced || !pirateStoryFlintlock(entry)) return;
+        // A play set's native figures have innate story equipment (no upgrade): see storyEquipment.
+        // Match it for registered visitors ONLY in that play set. Keep the real upgrade pointer
+        // and all award/suppression bits intact; elsewhere the normal upgrade remains native.
+        const auto* story = active && !forced ? playsetStoryEquipment(entry) : nullptr;
+        if (!story) return;
         auto** prerequisite = reinterpret_cast<const char**>(entry + 0x20);
         const auto saved = *prerequisite;
         *prerequisite = nullptr;
+        storyRefreshEntry = entry; storyRefresh = story;
         __try { originalRefreshTool(self, false); }
-        __finally { *prerequisite = saved; }
+        __finally { *prerequisite = saved; storyRefreshEntry = nullptr; storyRefresh = nullptr; }
     }
     void* __cdecl traceProjectileCreate(std::uint32_t requestedActor, ProjectileVector position, std::uint32_t kind, void* owner) {
         const bool report = InterlockedIncrement(&projectileEvents) <= 128;
@@ -307,20 +322,29 @@ namespace {
             return player >= 0 && player < 4 && currentWorldIsPlayset();
         } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
-    bool pirateStoryFlintlock(const unsigned char* entry) noexcept {
-        if (!entry || !zoneManager || !zoneString) return false;
+    // cached: also an entry whose availability is already cached (the zone filter after GetTool).
+    const StoryEquipment* playsetStoryEquipment(const unsigned char* entry, bool cached) noexcept {
+        if (!entry || !zoneManager || !zoneString) return nullptr;
         __try {
-            if ((entry[0x78] & 5) || *reinterpret_cast<const unsigned*>(entry + 0x30) != ~0u ||
-                *reinterpret_cast<const unsigned*>(entry + 0x5C) != 1) return false;
+            if ((!cached && (entry[0x78] & 5)) || *reinterpret_cast<const unsigned*>(entry + 0x30) != ~0u ||
+                *reinterpret_cast<const unsigned*>(entry + 0x5C) != 1) return nullptr;
             const auto name = *reinterpret_cast<const char* const*>(entry + 0x14);
             const auto upgrade = *reinterpret_cast<const char* const*>(entry + 0x20);
-            if (!name || std::strcmp(name, "ITEM_FLINTLOCK") || !upgrade || std::strcmp(upgrade, "UP_FlintLock")) return false;
+            if (!name || !upgrade) return nullptr;
+            bool known = false;
+            for (const auto& candidate : storyEquipment)
+                known = known || (!std::strcmp(name, candidate.tool) && !std::strcmp(upgrade, candidate.upgrade));
+            if (!known) return nullptr;
             auto* tools = *reinterpret_cast<void* const*>(entry);
-            if (!tools || !playerInPlayset(componentActor(tools)) || !*zoneManager) return false;
+            if (!tools || !playerInPlayset(componentActor(tools)) || !*zoneManager) return nullptr;
             const auto zone = *reinterpret_cast<const int*>(static_cast<const unsigned char*>(*zoneManager) + 0x154);
             const auto world = zoneString(*zoneManager, "PlaysetProperties", zone, nullptr, nullptr);
-            return world && !_stricmp(world, "Pirates");
-        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+            if (!world) return nullptr;
+            for (const auto& candidate : storyEquipment)
+                if (!std::strcmp(name, candidate.tool) && !std::strcmp(upgrade, candidate.upgrade) &&
+                    !_stricmp(world, candidate.playset)) return &candidate;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return nullptr;
     }
     bool canSelectPlayerTools(void* state, std::uint32_t actor) noexcept {
         if (!playerInPlayset(actor) || !originalControlGet) return false;
@@ -354,12 +378,16 @@ namespace {
         std::uint32_t actor{};
         __try {
             const auto* memory = static_cast<const unsigned char*>(self);
-            if (!crossPlaysetTool(memory)) return result;
+            // Story equipment from another world's row (the invisibility pack) passes this filter
+            // only in its play set, also while its prerequisite is cleared for the refresh.
+            const auto* story = memory == storyRefreshEntry ? storyRefresh : playsetStoryEquipment(memory, true);
+            const bool foreignStory = story && story->foreignZone;
+            if (!crossPlaysetTool(memory) && !foreignStory) return result;
             // GetTool has two zone calls. The earlier call resolves an unlocked
             // override row before availability is cached. Its prerequisite check
             // is verified below; requiring the later cache bit here would discard
             // foreign tool rows before their name/upgrade fields were resolved.
-            const bool resolvingRow = sharedToolsAcrossPlaysets && caller == installedBase + 0xC1E316;
+            const bool resolvingRow = (sharedToolsAcrossPlaysets || foreignStory) && caller == installedBase + 0xC1E316;
             if (resolvingRow ? (memory[0x78] & 1) != 0 : (memory[0x78] & 5) != 4) return result;
             auto* tools = *static_cast<void**>(self);
             // The native caller checks upgrade/unlock state before this zone filter.

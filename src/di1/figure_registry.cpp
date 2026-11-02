@@ -645,7 +645,7 @@ bool templateFigure(std::string_view gateway) {
 std::string interactionGroupName(std::string_view name) {
     const auto key = lower(name.starts_with("Mech:") || name.starts_with("mech:") ? name.substr(5) : name);
     for (const std::string_view group : {"Ship", "Bike", "Rowboat", "RideHorse", "CarRide", "VehicleDrive",
-        "VehicleDrive_SML", "Hoverboard", "JetPack_Glide", "Booster"})
+        "VehicleDrive_SML", "Hoverboard", "JetPack_Glide", "Booster", "Sneak"})
         if (lower(group) == key) return "Mech:" + std::string(group);
     return {};
 }

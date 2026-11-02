@@ -10,6 +10,7 @@
 #include "di1/character_targets.hpp"
 #include "di1/character_mods.hpp"
 #include "di1/character_model.hpp"
+#include "di1/character_profile.hpp"
 #include "di1/character_gameplay.hpp"
 #include "di1/character_assets.hpp"
 #include "di1/character_loadout.hpp"
@@ -20,6 +21,7 @@
 #include "di1/gui_screens.hpp"
 #include "di1/toybox_share.hpp"
 #include "di1/toy_store_infinity.hpp"
+#include "di1/toy_store_turbo.hpp"
 #include "di1/toy_store_water.hpp"
 #include "di1/native_catalog.hpp"
 #include "minhook/MinHook.h"
@@ -285,7 +287,7 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         if (!config().toyStoreInfinity) return;
         try {
             NativeCatalog catalog(assets, gameAssets);
-            setToyStoreData(readToyStoreData(catalog, messages));
+            setToyStoreData(readToyStoreData(catalog, messages, config().hexDiscsInPlaysets));
         } catch (const std::exception& error) {
             messages.push_back(std::string("ToyStore: other worlds' vehicles unavailable: ") + error.what());
         }
@@ -322,7 +324,7 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
                 if (failed.empty()) failed = name + " (" + error.what() + ")";
             }
         }
-        messages.push_back("ToyStore: ride and drive animations added to " + std::to_string(completed) + " play set characters" +
+        messages.push_back("ToyStore: ride, drive and Toy Box tool animations added to " + std::to_string(completed) + " play set characters" +
             (failed.empty() ? "." : "; first skipped: " + failed + "."));
     }
 
@@ -332,8 +334,8 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         wchar_t executable[32768]{};
         const auto length = GetModuleFileNameW(host, executable, 32768);
         const wchar_t* slash = length && length < 32768 ? wcsrchr(executable, L'\\') : nullptr;
-        // Toy Store Infinity serves completed play set entities even without mods.
-        if ((list.empty() && !config().toyStoreInfinity) || !slash) {
+        // Toy Store Infinity and character freedom serve completed entities even without mods.
+        if ((list.empty() && !config().toyStoreInfinity && !config().charactersInAnyPlayset) || !slash) {
             figures.clear();
             tools.clear();
             if (trace || config().traceCharacterFreedom) installAssetLoader(host, nullptr, trace);
@@ -347,6 +349,15 @@ log("APPLIED: " .. changed .. " Toy Box limits multiplied by " .. options.Scale)
         prepareCustomCharacterGameplay(assets, gameAssets, figures, messages);
         prepareCustomCharacterAssets(assets, gameAssets, figures, messages);
         prepareToyStore(assets, gameAssets, messages);
+        // Visitors holding the MU scare megaphone sneak like Monsters University's own figures.
+        if (config().charactersInAnyPlayset) {
+            try {
+                NativeCatalog catalog(assets, gameAssets);
+                messages.push_back(completeVisitorSneak(catalog, assets));
+            } catch (const std::exception& error) {
+                messages.push_back(std::string("Gameplay: MU sneak animations unavailable: ") + error.what());
+            }
+        }
         std::erase_if(tools,[&](CustomTool& t) {
             std::erase_if(t.targetSkus,[&](auto sku) {return std::none_of(figures.begin(),figures.end(),[&](const auto& f){return f.sku==sku;});});
             return t.targetSkus.empty();
@@ -521,6 +532,9 @@ bool installMods(HMODULE host) {
                 if (installToyStoreWater(reinterpret_cast<std::uintptr_t>(host)))
                     log("ToyStore: vehicles that fall into Pirates' sea sink and respawn natively.");
                 else log("ToyStore: vehicle/ocean signature differs; vehicles keep driving on Pirates' sea.");
+                if (installToyStoreTurbo(reinterpret_cast<std::uintptr_t>(host)))
+                    log("ToyStore: vehicles driven by a character keep their turbo meter in Cars.");
+                else log("ToyStore: turbo meter signature differs; Cars keeps its turbo rules for every vehicle.");
                 toyStoreNames = true;
                 log("ToyStore: Toy Store Infinity enabled (%s).", settings.toyStoreInfinityAll ? "all toys" : "unlocked toys");
             } else log("ToyStore: localized label hook differs; Toy Store Infinity left off.");

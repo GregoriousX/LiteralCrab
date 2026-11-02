@@ -10,6 +10,7 @@
 #include "di1/character_assets.hpp"
 #include "di1/native_catalog.hpp"
 #include <array>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -60,10 +61,14 @@ PlayerModel preparePlayerModel(NativeCatalog& catalog, mods::AssetIndex& assets,
     std::string_view sourceModel, std::string_view templateModel, AnimationMode mode, ResourceAliases& aliases,
     const std::vector<std::pair<std::string, std::string>>& groupDonors = {});
 // A stock play set entity (characters/inc_bob/inc_bob_ps) has only the ride and drive sets its
-// own world uses. Adds the vehicle and mount groups it lacks from the same character's entity
+// own world uses. Adds the vehicle, mount and Toy Box tool groups it lacks from the same character's entity
 // (characters/inc_bob/inc_bob) when both declare identical channels, serving the effective
 // entity in place and any motion the play set lacks from the character's archive. Returns the
 // groups added; nothing changes when there are none.
 std::vector<std::string> completePlaysetRides(NativeCatalog& catalog, mods::AssetIndex& assets, std::string_view playsetModel,
     std::string_view baseModel);
+// The same for any donor entity: adds the groups `wanted` accepts that the target entity lacks,
+// with their motions from the donor's archive. Returns the groups added.
+std::vector<std::string> completeEntityGroups(NativeCatalog& catalog, mods::AssetIndex& assets, std::string_view targetModel,
+    std::string_view donorModel, const std::function<bool(std::string_view)>& wanted);
 }

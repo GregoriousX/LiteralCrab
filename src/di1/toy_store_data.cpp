@@ -124,7 +124,7 @@ std::map<std::string, std::string> readDictionaryTexts(std::string_view stringId
     return result;
 }
 
-ToyStoreData readToyStoreData(NativeCatalog& catalog, std::vector<std::string>& messages) {
+ToyStoreData readToyStoreData(NativeCatalog& catalog, std::vector<std::string>& messages, bool hexObjects) {
     ToyStoreData data;
     // Placeable objects: Core rows are loaded everywhere; a package's rows only in its world.
     std::map<std::string, const data::Value*> core;
@@ -181,11 +181,24 @@ ToyStoreData readToyStoreData(NativeCatalog& catalog, std::vector<std::string>& 
     addInventory("gamedb/rumpusroom/inventory__lua.lua", true);
     for (const auto playset : playsets) try { addInventory("gamedb/" + std::string(playset) + "/inventory__lua.lua", false); }
         catch (const std::exception&) { /* No inventory of its own. */ }
+    // The portal spawns a hex disc's object by its original row name; its row is already M_NoSave.
+    std::size_t hexRows{};
+    if (hexObjects) for (const auto name : hexDiscObjects) {
+        const auto key = lowerPath(name);
+        const auto object = packaged.find(key);
+        if (core.contains(key) || object == packaged.end() || !copied.insert(key).second) continue;
+        data.objects += data::literal(*object->second) + ",";
+        ++hexRows;
+    }
     data.objects = "{" + data.objects + "}";
     std::set<std::string> visited, seen;
     for (const auto& toy : data.toys)
         if (const auto actor = actors.find(lowerPath(toy.model)); actor != actors.end() && named(actor->second))
             dependencyFiles(catalog, "Actor", actor->second, visited, seen, data.dependencies);
+    if (hexObjects) for (const auto name : hexDiscObjects)
+        if (const auto actor = actors.find(lowerPath(name)); actor != actors.end() && named(actor->second))
+            dependencyFiles(catalog, "Actor", actor->second, visited, seen, data.dependencies);
+    if (hexObjects) messages.push_back("ToyStore: " + std::to_string(hexRows) + " hex disc vehicle/mount rows for play sets.");
     for (const auto& toy : data.toys) {
         const auto actor = actors.find(lowerPath(toy.model));
         if (actor == actors.end()) continue;

@@ -21,6 +21,10 @@ struct ToolSource { std::string actor, dna, script, weapon; };
 ToolSource inferToolSource(NativeCatalog& catalog, const ToolRowInfo& tool, const ResourceAliases& aliases, bool wantWeapon);
 // Preloads for a gun's projectile visuals that exist in the shipped data.
 std::vector<std::string> weaponEffects(NativeCatalog& catalog, std::string_view gun);
+// Monsters University's own figures sneak (Mech:Sneak) instead of aiming, as does anyone holding the
+// MU scare megaphone companion. Adds that group to every other stock biped's entity from the MU figure
+// whose bind pose is nearest its rig. Returns a log line.
+std::string completeVisitorSneak(NativeCatalog& catalog, mods::AssetIndex& assets);
 // Default player control template for an NPC-only Items row.
 constexpr const char* defaultItemControl = "ITEM_BLASTER";
 }

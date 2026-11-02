@@ -43,6 +43,7 @@ struct Config {
     bool charactersInAnyPlayset = false;
     // Widen tool world filters only; native unlocks and suppression still apply.
     bool toolsInAnyPlayset = false;
+    bool hexDiscsInPlaysets = false;
     bool traceCharacterFreedom = false;
     // Toy Store Infinity in play sets: unlocked vehicles/mounts of every world; All lists locked ones too.
     bool toyStoreInfinity = false;

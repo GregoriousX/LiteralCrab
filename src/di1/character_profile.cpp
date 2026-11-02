@@ -72,7 +72,7 @@ std::vector<std::pair<std::string, std::string>> interactionDonors(NativeCatalog
     };
     const auto ships = [&](const std::string& model, const std::string& group) { return !entityWith(model, group).empty(); };
     for (const std::string_view name : {"Ship", "Bike", "Rowboat", "RideHorse", "CarRide", "VehicleDrive",
-        "VehicleDrive_SML", "Hoverboard", "JetPack_Glide", "Booster"}) {
+        "VehicleDrive_SML", "Hoverboard", "JetPack_Glide", "Booster", "Sneak"}) {
         const auto group = interactionGroupName(name);
         std::string donor;
         for (const auto& [declared, figure] : g.animationDonors) if (declared == group) donor = figure;
@@ -105,6 +105,44 @@ std::vector<std::pair<std::string, std::string>> interactionDonors(NativeCatalog
     }
     return result;
 }
+}
+
+std::string completeVisitorSneak(NativeCatalog& catalog, mods::AssetIndex& assets) {
+    // The group ships only on the MU figures' play set entities.
+    struct Donor { std::string figure, entity; std::map<std::string, std::array<double, 3>> pose; };
+    std::vector<Donor> donors;
+    for (const std::string_view figure : {"MU_Sully", "MU_Mike", "MU_Randall"}) {
+        try {
+            const auto model = lower(loadTemplate(catalog, figure).model);
+            if (shippedGroups(catalog, model + "_ps").contains("Mech:Sneak"))
+                donors.push_back({std::string(figure), model + "_ps", bindPose(catalog, model)});
+        } catch (const std::exception&) { /* An unreadable figure is not a donor. */ }
+    }
+    if (donors.empty()) return "Gameplay: MU sneak animations unavailable (no MU figure ships Mech:Sneak).";
+    std::size_t completed{};
+    std::string first;
+    for (const auto figure : templateFigures()) {
+        if (lower(figure).starts_with("mu_")) continue;
+        try {
+            const auto model = lower(loadTemplate(catalog, figure).model);
+            const auto rig = bindPose(catalog, model);
+            const Donor* nearest{};
+            double best = 1.0; // Beyond this offset no rig is compatible.
+            for (const auto& donor : donors) {
+                const auto distance = rigDistance(rig, donor.pose);
+                if (distance >= 0 && distance < best) { best = distance; nearest = &donor; }
+            }
+            if (!nearest) continue;
+            if (!completeEntityGroups(catalog, assets, model, nearest->entity,
+                    [](std::string_view group) { return group == "Mech:Sneak"; }).empty()) ++completed;
+        } catch (const std::exception& error) {
+            if (first.empty()) first = std::string(figure) + " (" + error.what() + ")";
+        }
+    }
+    return "Gameplay: MU sneak animations added to " + std::to_string(completed) + " visiting figures" +
+        (first.empty() ? "." : "; first skipped: " + first + ".");
+}
+namespace {
 std::string chooseTemplate(NativeCatalog& catalog, const CustomFigure& f, const std::string& model, std::vector<std::string>& messages) {
     if (!f.gameplay.templateFigure.empty()) return f.gameplay.templateFigure;
     if (!f.baseCharacter.empty() && templateFigure(f.baseCharacter)) return f.baseCharacter;

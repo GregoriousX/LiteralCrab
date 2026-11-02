@@ -72,7 +72,7 @@ std::string unhex8(std::string_view text) {
 // A character's own powers and one-offs are never borrowed.
 bool interactionGroup(std::string_view group) {
     for (const std::string_view shared : {"Mech:Ship", "Mech:Bike", "Mech:Rowboat", "Mech:RideHorse", "Mech:CarRide",
-        "Mech:VehicleDrive", "Mech:VehicleDrive_SML", "Mech:Hoverboard", "Mech:JetPack_Glide", "Mech:Booster"})
+        "Mech:VehicleDrive", "Mech:VehicleDrive_SML", "Mech:Hoverboard", "Mech:JetPack_Glide", "Mech:Booster", "Mech:Sneak"})
         if (group == shared) return true;
     return false;
 }
@@ -310,6 +310,13 @@ PlayerModel preparePlayerModel(NativeCatalog& catalog, mods::AssetIndex& assets,
                 result.donatedGroups.push_back(name + "<-" + d->path);
             } else copyFrom(donor, donorDirectory, fileSets(built), index);
         }
+        // Donated groups the template itself lacks (MU's Mech:Sneak ships only on MU figures).
+        for (const auto& d : donors) {
+            if (present.contains(d.group) || group(donor, d.group) != scene::npos) continue;
+            copyFrom(d.entity, directoryOf(d.path), fileSets(built), group(d.entity, d.group));
+            result.addedGroups.push_back(d.group);
+            result.donatedGroups.push_back(d.group + "<-" + d.path);
+        }
         // Shared interaction aliases missing from groups the entity already
         // defines. Their entries index the playback channels, so both entities
         // must declare identical channels; existing mappings are never changed.
@@ -447,7 +454,18 @@ PlayerModel preparePlayerModel(NativeCatalog& catalog, mods::AssetIndex& assets,
 
 std::vector<std::string> completePlaysetRides(NativeCatalog& catalog, mods::AssetIndex& assets, std::string_view playsetModel,
     std::string_view baseModel) {
-    const auto path = lowerPath(playsetModel), base = lowerPath(baseModel), directory = directoryOf(path);
+    // Also the Toy Box tool sets (prop combos, boards, jetpack glide, towing, goo, zero point energy):
+    // Toy Box and hex disc tools in a play set play them on the character's play set entity.
+    return completeEntityGroups(catalog, assets, playsetModel, baseModel, [](std::string_view group) {
+        for (const std::string_view tool : {"Mech:GenCombat", "Mech:Hoverboard", "Mech:JetPack_Glide", "Mech:Tow",
+            "Mech:GooGrowShrink", "Mech:ZeroPoint", "Playset:ToyBox"})
+            if (group == tool) return true;
+        return rideGroup(group);
+    });
+}
+std::vector<std::string> completeEntityGroups(NativeCatalog& catalog, mods::AssetIndex& assets, std::string_view targetModel,
+    std::string_view donorModel, const std::function<bool(std::string_view)>& wanted) {
+    const auto path = lowerPath(targetModel), base = lowerPath(donorModel), directory = directoryOf(path);
     auto built = identical(readEntity(catalog, path), path + ".bent");
     const auto donor = identical(readEntity(catalog, base), base + ".bent");
     const auto channels = [](const scene::Scene& s) { return scene::child(s, 0, "Channels"); };
@@ -458,7 +476,7 @@ std::vector<std::string> completePlaysetRides(NativeCatalog& catalog, mods::Asse
     std::vector<std::string> added;
     std::set<std::string> needed;
     for (const auto& [name, index] : groups(donor)) {
-        if (!rideGroup(name) || present.contains(name)) continue;
+        if (!wanted(name) || present.contains(name)) continue;
         std::vector<scene::Atom> appended;
         const auto parent = fileSets(built);
         const auto depth = built.atoms[parent].depth + 1 - donor.atoms[index].depth;
@@ -490,7 +508,7 @@ std::vector<std::string> completePlaysetRides(NativeCatalog& catalog, mods::Asse
         const auto file = pending.back(); pending.pop_back();
         if (assets.member(file) || own.contains(file)) continue;
         const auto found = character.find(file);
-        if (found == character.end()) throw std::runtime_error("ride motion missing from " + base + ": " + file);
+        if (found == character.end()) throw std::runtime_error("motion missing from " + base + ": " + file);
         mods::AssetMember member;
         member.name = file; member.package = found->second.archive; member.entry = found->second.entry;
         if (file.ends_with(".banm")) {

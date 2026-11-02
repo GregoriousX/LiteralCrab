@@ -43,6 +43,7 @@ LimitScale=1
 [Gameplay]
 CharactersInAnyPlayset=0
 ToolsInAnyPlayset=0
+HexDiscsInPlaysets=0
 
 [ToyStore]
 Infinity=0
@@ -87,6 +88,7 @@ Trace=0
 | `[ToyBox]` `LimitScale` | `1` | Multiplies the Toy Box editor's limits (its "memory" meter): object costs, measured memory and frame time. `4` is generous, `10` very high, up to `100`. Very large Toy Boxes can still slow down or run out of memory. Needs `[Mods] Enabled=1`. |
 | `[Gameplay]` `CharactersInAnyPlayset` | `0` | `1` lets every character play in every play set. Visitors use their base actor, all avatar dependency maps are loaded, and tool/motion effects are enabled. Player tool selection and unlocked, unsuppressed personal equipment (such as Buzz's innate Pixar Ball) can cross playset zone restrictions. Shared Toy Box/shop equipment retains its native world filters unless `ToolsInAnyPlayset=1`. Native character rosters, character swaps, unlocks and Cars race rules are preserved; six biped progression filters accept visitors. Changes are in memory only. Needs `[Mods] Enabled=1`. See the repair notes and testing status. |
 | `[Gameplay]` `ToolsInAnyPlayset` | `0` | `1` lets existing tools and packs cross playset world filters after the game allows their use through native unlock/upgrade checks. Requires `CharactersInAnyPlayset=1` and `[Mods] Enabled=1`; otherwise inactive. Does not grant equipment, purchases or progression. Character conditions, suppression and action restrictions remain native. |
+| `[Gameplay]` `HexDiscsInPlaysets` | `0` | `1` lets hexagonal power discs chosen in the virtual portal work in play sets and adventures. The game normally answers them there with "only in the Toy Box"; with the option vehicle and mount discs spawn their toy beside the player and tool discs award their tool, through the Toy Box's own code; the play sets also load those toys' object rows (with `[ToyStore] Infinity=1`). Disc tools are Toy Box tools, so in a play set they also need `ToolsInAnyPlayset=1`. Sky and terrain discs keep the "only in the Toy Box" message: the game changes them through the Toy Box editor, which a play set does not run (applying one there soft-locked the game). The change is in memory only. PL: `1` pozwala używać dysków heksagonalnych z wirtualnego portalu w playsetach i przygodach, tak jak w Toy Boxie; narzędzia z dysków wymagają tam też `ToolsInAnyPlayset=1`. |
 | `[ToyStore]` `Infinity` | `0` | `1` adds **Toy Store Infinity** to the play set pause menu and to the Infinity kiosk, next to the Toy Store: the unlocked vehicles and mounts of every world, placed beside you for free. See [Toy Store Infinity](playsets.md#toy-store-infinity). Needs `[Mods] Enabled=1`. |
 | `[ToyStore]` `InfinityAll` | `0` | `1` also lists the locked vehicles and mounts in Toy Store Infinity. Requires `Infinity=1`. |
 | `[ToyBoxes]` `Enabled` | `0` | `1` restores **Toy Box Share** (Toy Box menu > Toy Box Share), the PC release's menu that Gold hides, with the Toy Boxes from the `toyboxes` folder beside the ASI. See [Toy Box Share](toybox-share.md#toy-box-share). The menu entry needs `[Mods] Enabled=1`. |

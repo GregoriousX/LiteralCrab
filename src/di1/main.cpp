@@ -16,6 +16,8 @@
 #include "di1/post_effects.hpp"
 #include "di1/split_screen.hpp"
 #include "di1/toybox_share.hpp"
+#include "di1/hex_discs.hpp"
+#include "di1/toy_store_turbo.hpp"
 #include "di1/toy_store_water.hpp"
 #include "minhook/MinHook.h"
 #include <atomic>
@@ -79,6 +81,7 @@ namespace {
         crabe::di1::installControllerHooks(host, crabe::di1::config());
         crabe::di1::installSplitScreen(host, crabe::di1::config());
         crabe::di1::installIntroSkip(host, crabe::di1::config());
+        crabe::di1::installHexDiscs(host, crabe::di1::config());
         // Both halves or neither: ownership/FX data needs the script loader.
         if (crabe::di1::config().charactersInAnyPlayset && !crabe::di1::config().mods)
             crabe::di1::log("Gameplay: CharactersInAnyPlayset needs [Mods] Enabled=1; nothing changed.");
@@ -91,6 +94,7 @@ namespace {
             crabe::di1::removeCustomAudio();
             crabe::di1::removeCharacterTargets();
             crabe::di1::removeToyStoreWater();
+            crabe::di1::removeToyStoreTurbo();
             crabe::di1::removeCharacterFreedom();
         }
         // The resolved asset index exists now; locale/audio startup has not run yet.

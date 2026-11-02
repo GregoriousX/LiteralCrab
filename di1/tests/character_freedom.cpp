@@ -1169,26 +1169,39 @@ int wmain(int argc, wchar_t** argv) {
                     // Native Pirates figures have the flintlock innately. Visitors
                     // gain that same story equipment only inside Pirates, without
                     // unlocking the upgrade or changing award bits/other equipment.
-                    testToolName = "ITEM_FLINTLOCK"; testToolUpgrade = "UP_FlintLock";
+                    // Lone Ranger's pistol/tomahawk and Toy Story's Pixar ball follow the same rule.
                     testToolGroup = "items";
                     *reinterpret_cast<const char**>(testTools + 0x2EC) = testToolGroup;
                     unsigned storyCases = 0;
+                    // The Toy Box invisibility pack stands in for Violet's and the MU monsters' powers:
+                    // its row lists only Toy Box zones, so the native world filter refuses it there.
+                    struct Story { const char* tool; const char* upgrade; const char* world; const char* world2; bool foreign; const char* group; };
+                    for (const auto& story : {Story{"ITEM_FLINTLOCK", "UP_FlintLock", "Pirates", "", false, "items"},
+                            Story{"ITEM_PISTOL", "UP_Pistol", "LoneRanger", "", false, "items"},
+                            Story{"ITEM_TOMAHAWK", "UP_Tomahawk", "LoneRanger", "", false, "items"},
+                            Story{"ITEM_PIXARBALL", "UP_PixarBalls", "ToyStoryInSpace", "", false, "items"},
+                            Story{"PROP_INVISIBILITYPACK", "UP_InvisibilityPack", "Incredibles", "MonstersU", true, "props"}}) {
+                    testToolName = story.tool; testToolUpgrade = story.upgrade; testToolGroup = story.group;
+                    *reinterpret_cast<const char**>(testTools + 0x2EC) = testToolGroup;
                     for (const char* world : {"Cars", "Incredibles", "LoneRanger", "MonstersU", "Pirates", "ToyStoryInSpace"})
                         for (int player = 0; player < 4; ++player) for (const bool unlocked : {false, true}) {
                             testCurrentPlayset = world; testPlayerIndex = player;
                             testProgressionUnlocked = unlocked;
-                            const bool pirates = !std::strcmp(world, "Pirates");
-                            testWorldResult = pirates ? 1 : 0;
+                            const bool home = !std::strcmp(world, story.world) || !std::strcmp(world, story.world2);
+                            testWorldResult = home && !story.foreign ? 1 : 0;
                             prepare(false);
                             *reinterpret_cast<const char**>(toolParent + 0x1C) = testToolGroup;
                             void* selected{};
-                            const bool allowed = pirates || (shared && unlocked);
+                            const bool allowed = home || (shared && unlocked);
                             CHECK(nextTool(testTools, testToolGroup, 0, &selected) == (allowed ? 1 : -1));
                             CHECK(bool(selected) == allowed);
                             CHECK(*reinterpret_cast<const char**>(toolParent + 0x20) == testToolUpgrade);
                             CHECK(!(toolParent[0x78] & 2)); // No persistent/runtime tool award.
                             ++storyCases;
                         }
+                    }
+                    testToolName = "ITEM_FLINTLOCK"; testToolUpgrade = "UP_FlintLock"; testToolGroup = "items";
+                    *reinterpret_cast<const char**>(testTools + 0x2EC) = testToolGroup;
                     testCurrentPlayset = "Pirates"; testWorldResult = 1; testPlayerIndex = 0;
                     testProgressionUnlocked = false;
                     for (const bool suppressed : {false, true}) {
@@ -1208,6 +1221,10 @@ int wmain(int argc, wchar_t** argv) {
                     testToolName = "ITEM_PISTOL";
                     prepare(false); nativeRefresh(toolParent, false);
                     CHECK(!(toolParent[0x78] & 4)); // No broad gun/ability prerequisite bypass.
+                    testToolName = "ITEM_BLUNDERBUSS"; testToolUpgrade = "UP_Blunderbuss";
+                    prepare(false); nativeRefresh(toolParent, false);
+                    CHECK(!(toolParent[0x78] & 4)); // Earned Pirates gear stays earned.
+                    testToolUpgrade = "UP_FlintLock";
                     testToolName = "ITEM_FLINTLOCK";
                     prepare(false); toolParent[0x78] = 2;
                     nativeRefresh(toolParent, false);
@@ -1215,7 +1232,7 @@ int wmain(int argc, wchar_t** argv) {
                     CHECK(*reinterpret_cast<const char**>(toolParent + 0x20) == testToolUpgrade);
                     testToolName = "PROP_JETPACK"; testToolUpgrade = "UP_JetPack";
                     testToolGroup = "props"; testWorldResult = 0;
-                    std::printf("Native Pirates story flintlock: shared=%d, %u cases passed\n", shared, storyCases);
+                    std::printf("Native play set story equipment: shared=%d, %u cases passed\n", shared, storyCases);
                     for (const char* world : {"Cars", "Incredibles", "LoneRanger", "MonstersU", "Pirates", "ToyStoryInSpace"})
                         for (int player = 0; player < 4; ++player)
                             for (const bool unlocked : {false, true}) for (const bool resolving : {false, true}) {

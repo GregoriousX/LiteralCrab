@@ -45,7 +45,14 @@ std::map<std::string, std::string> readDictionaryTexts(std::string_view stringId
 // The vehicles and mounts of the Toy Box and of every play set that can be placed in a play set.
 // Missing or unreadable optional parts (a play set's data, a dictionary) only leave them out;
 // messages say what was used.
-ToyStoreData readToyStoreData(NativeCatalog& catalog, std::vector<std::string>& messages);
+// hexObjects: also give the play sets the Toy Box object rows and actor dependencies of the
+// hexagonal power discs' vehicles and mounts, which the portal spawns with HexDiscsInPlaysets.
+ToyStoreData readToyStoreData(NativeCatalog& catalog, std::vector<std::string>& messages, bool hexObjects = false);
+// Objects the virtual reader's hex discs spawn (VirtualReaderData.SourceHexData, type Object).
+inline constexpr std::string_view hexDiscObjects[] = {"TB_MickeysJalopy", "TB_CinderellaCoach", "TB_ElectricMayhemBus",
+    "TB_PizzaPlanetTruck", "TB_MikeCar", "RRO_VEHICLE_TS_BuzzRide", "TB_HookShip", "TB_DumboRide", "TB_Maximus", "TB_Abu",
+    "TB_Kahn", "TB_HeadlessHorse", "TB_CruellaCar", "TB_DisneylandTram", "TB_Helicopter_Calico", "TB_Angus", "TB_Tantor",
+    "TB_Philippe"};
 // Main-dictionary keys (pause menu texts) whose native texts tell which language the game uses.
 inline constexpr std::string_view toyStoreProbeKeys[] = {"scn_pause_options", "scn_pause_resume", "sharedtext_quit",
     "sharedtext_save", "sharedtext_load", "frontend_pause"};

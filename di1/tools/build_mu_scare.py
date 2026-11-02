@@ -100,6 +100,23 @@ def build_table(raw):
     tool[5] = tool[0]
     tool[6] = add_values([len(actors)])
     tool[7] = 0xFFFFFFFF
+    # Held like the MU figures' own items: the aim control sneaks. Field +0x24 lists the item's control
+    # contexts (block 8): the gun's Allow_TargetMode becomes Mike's Allow_Sneak, and the item applies
+    # the SneakEquipped actor state with the gun's own BlasterEquipped.
+    def states(row):
+        end = stream.index(0xFFFFFFFF, row[8])
+        return stream[row[8]:end]
+    sneak = [index for index in states(by_name["PROP_MIKE"]) if string(index) == "SneakEquipped"]
+    require(len(sneak) == 1, "Unexpected MU sneak state")
+    gun_states = states(by_name["ITEM_MIDWAYMANIAGUN"])
+    require([string(index) for index in gun_states] == ["BlasterEquipped"], "Unexpected gun states")
+    tool[8] = add_values([*gun_states, *sneak])
+    contexts = [string(row[0]) for row in rows(8, 3)]
+    gun_controls = stream[tool[9]:stream.index(0xFFFFFFFF, tool[9])]
+    require([contexts[index] for index in gun_controls] == ["Allow_Gun", "Allow_TargetMode"], "Unexpected gun controls")
+    mike_controls = stream[by_name["ITEM_MIKE"][9]:stream.index(0xFFFFFFFF, by_name["ITEM_MIKE"][9])]
+    require([contexts[index] for index in mike_controls] == ["Allow_QuickScare", "Allow_Sneak"], "Unexpected MU controls")
+    tool[9] = add_values([gun_controls[0], mike_controls[1]])
     # Direct true, unlike hidden native abilities with per-avatar availability 0.
     tool[17] = tool[18] = by_name["ITEM_MIDWAYMANIAGUN"][17]
     require(string(tool[17]) == "1", "Unexpected tool availability parameter")

@@ -35,7 +35,7 @@ set(CUSTOM_CONTENT src/di1/lua_data.cpp src/di1/scene_format.cpp src/di1/native_
 set_source_files_properties(src/di1/lua_data.cpp src/di1/scene_format.cpp src/di1/native_catalog.cpp PROPERTIES COMPILE_OPTIONS /O1)
 set(CUSTOM_PROFILE src/di1/character_profile.cpp src/di1/character_model.cpp)
 set_source_files_properties(${CUSTOM_PROFILE} PROPERTIES COMPILE_OPTIONS /O1)
-add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} ${TOYBOXES} src/di1/engine.cpp src/di1/mods.cpp src/di1/adapters.cpp src/di1/asset_loader.cpp src/di1/camera.cpp src/di1/character_freedom.cpp src/di1/character_particles.cpp src/di1/controller.cpp src/di1/gui_screens.cpp src/di1/intro.cpp src/di1/post_effects.cpp src/di1/split_screen.cpp src/di1/toybox_share.cpp src/di1/toy_store_infinity.cpp src/di1/toy_store_data.cpp src/di1/toy_store_water.cpp src/di1/main.cpp di1/exports.def)
+add_library(LiteralCrab SHARED ${DI1_COMMON} ${SCRIPT_MODS} ${ASSET_MODS} ${TOYBOXES} src/di1/engine.cpp src/di1/mods.cpp src/di1/adapters.cpp src/di1/asset_loader.cpp src/di1/camera.cpp src/di1/character_freedom.cpp src/di1/character_particles.cpp src/di1/controller.cpp src/di1/gui_screens.cpp src/di1/intro.cpp src/di1/post_effects.cpp src/di1/split_screen.cpp src/di1/toybox_share.cpp src/di1/toy_store_infinity.cpp src/di1/toy_store_data.cpp src/di1/toy_store_turbo.cpp src/di1/toy_store_water.cpp src/di1/hex_discs.cpp src/di1/main.cpp di1/exports.def)
 target_sources(LiteralCrab PRIVATE ${LANGUAGE_SWITCHER})
 target_sources(LiteralCrab PRIVATE src/di1/audio_banks.cpp)
 target_sources(LiteralCrab PRIVATE src/di1/character_targets.cpp)

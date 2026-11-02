@@ -75,6 +75,7 @@ void openLogAndConfig(HMODULE module) {
     else log("Invalid ToyBox LimitScale; using the game's limits.");
     settings.charactersInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"CharactersInAnyPlayset", 0, iniPath) != 0;
     settings.toolsInAnyPlayset = GetPrivateProfileIntW(L"Gameplay", L"ToolsInAnyPlayset", 0, iniPath) != 0;
+    settings.hexDiscsInPlaysets = GetPrivateProfileIntW(L"Gameplay", L"HexDiscsInPlaysets", 0, iniPath) != 0;
     if (settings.toolsInAnyPlayset && !settings.charactersInAnyPlayset) {
         log("Gameplay: ToolsInAnyPlayset needs CharactersInAnyPlayset=1; tool world filters unchanged.");
         settings.toolsInAnyPlayset = false;
